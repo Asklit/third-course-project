@@ -1,0 +1,82 @@
+﻿services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: lms-postgres
+    environment:
+      POSTGRES_DB: lms
+      POSTGRES_USER: lms
+      POSTGRES_PASSWORD: lms
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - lms-net
+
+  mongo:
+    image: mongo:7
+    container_name: lms-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - lms-net
+
+  wiki:
+    build:
+      context: ../wiki
+      dockerfile: Dockerfile
+    container_name: lms-wiki
+    environment:
+      MONGO_URL: mongodb://mongo:27017
+      MONGO_DB: lms_wiki
+      MONGO_COLLECTION: labs
+    depends_on:
+      - mongo
+    ports:
+      - "8001:8001"
+    networks:
+      - lms-net
+
+  core:
+    build:
+      context: ../core
+      dockerfile: Dockerfile
+    container_name: lms-core
+    environment:
+      DATABASE_URL: postgresql://lms:lms@postgres:5432/lms
+      JWT_SECRET: super-secret-dev-key
+      WIKI_BASE_URL: http://wiki:8001
+      CALLBACK_URL: ""
+      SUBMISSIONS_DIR: /data/submissions
+    depends_on:
+      - postgres
+      - wiki
+    ports:
+      - "8000:8000"
+    volumes:
+      - submissions_data:/data/submissions
+    networks:
+      - lms-net
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    container_name: lms-frontend
+    depends_on:
+      - core
+    ports:
+      - "5173:80"
+    networks:
+      - lms-net
+
+networks:
+  lms-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  mongo_data:
+  submissions_data:
