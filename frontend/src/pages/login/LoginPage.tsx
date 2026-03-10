@@ -23,18 +23,20 @@ export function LoginPage() {
       await login({ email, password });
       navigate("/assignments");
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "Login failed");
+      setError(submitError instanceof Error ? submitError.message : "Ошибка входа");
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <div className="page">
-      <form className="card" onSubmit={onSubmit}>
-        <h1>Student Login</h1>
-        <label>
-          Email
+    <div className="auth-page">
+      <form className="auth-card" onSubmit={onSubmit}>
+        <p className="auth-card__eyebrow">Корпоративная LMS</p>
+        <h1>Вход студента</h1>
+
+        <label className="field">
+          <span className="field__label">Почта</span>
           <input
             type="email"
             value={email}
@@ -42,8 +44,9 @@ export function LoginPage() {
             required
           />
         </label>
-        <label>
-          Password
+
+        <label className="field">
+          <span className="field__label">Пароль</span>
           <input
             type="password"
             value={password}
@@ -51,9 +54,11 @@ export function LoginPage() {
             required
           />
         </label>
-        {error ? <p className="error">{error}</p> : null}
-        <button type="submit" disabled={loading}>
-          {loading ? "Logging in..." : "Login"}
+
+        {error ? <p className="error-text">{error}</p> : null}
+
+        <button className="btn btn--primary btn--full" type="submit" disabled={loading}>
+          {loading ? "Входим..." : "Войти"}
         </button>
       </form>
     </div>

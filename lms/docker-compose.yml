@@ -56,7 +56,7 @@
     ports:
       - "8000:8000"
     volumes:
-      - submissions_data:/data/submissions
+      - ../data/submissions:/data/submissions
     networks:
       - lms-net
 
@@ -79,4 +79,3 @@ networks:
 volumes:
   postgres_data:
   mongo_data:
-  submissions_data:

@@ -1,11 +1,13 @@
-﻿import logging
+import logging
 import uuid
 
 from fastapi import FastAPI, HTTPException, Request
 from pymongo import MongoClient
+from pymongo.errors import PyMongoError
 
 from src.core.config import settings
 from src.core.logging import configure_logging
+from src.infrastructure.db.seed import seed_labs
 from src.presentation.schemas.schemas import LabDetails, LabSummary
 
 logger = logging.getLogger(__name__)
@@ -32,25 +34,14 @@ def create_app() -> FastAPI:
 
     @app.on_event("startup")
     def startup() -> None:
-        collection.create_index("slug", unique=True)
-
-        if collection.count_documents({}) == 0:
-            collection.insert_many(
-                [
-                    {
-                        "slug": "lr1-intro",
-                        "title": "LR1: Intro",
-                        "content_md": "# LR1 Intro\n\n- Setup project\n- Implement first endpoint\n- Prepare report",
-                        "prerequisites": [],
-                    },
-                    {
-                        "slug": "lr2-data-structures",
-                        "title": "LR2: Data Structures",
-                        "content_md": "# LR2 Data Structures\n\n- Lists and dicts\n- Complexity basics\n- Practical tasks",
-                        "prerequisites": ["lr1-intro"],
-                    },
-                ]
-            )
+        try:
+            collection.create_index("slug", unique=True)
+            seeded = seed_labs(collection)
+            logger.info("wiki seed completed", extra={"action": "wiki.seed", "status": seeded})
+        except PyMongoError as exc:
+            logger.error("wiki startup failed", extra={"action": "wiki.startup", "status": "failed"})
+            logger.debug(str(exc))
+            raise
 
     @app.get("/health")
     def health() -> dict[str, str]:

@@ -29,12 +29,26 @@ class AssignmentOut(BaseModel):
 class AssignmentDetailsOut(AssignmentOut):
     description: str
     wiki_url: str
+    requires_report_docx: bool
+    code_submission_mode: str
+
+
+class AssignmentSubmissionStatusOut(BaseModel):
+    submitted: bool
+    submitted_at: datetime | None = None
+    submission_id: int | None = None
+    status: str
+    can_submit: bool
+    code_link: str | None = None
+    submitted_late: bool = False
 
 
 class SubmissionMeta(BaseModel):
     assignment_id: int
     comment: str = ""
     submitted_at: datetime
+    code_mode: str = Field(pattern="^(file|link)$")
+    code_link: str = ""
 
 
 class SubmissionResponse(BaseModel):
@@ -61,3 +75,7 @@ class CallbackPayload(BaseModel):
     assignment_id: int
     files: list[dict[str, Any]]
     created_at: datetime
+    message: str = "Работа сдана"
+    late_submission: bool = False
+
+

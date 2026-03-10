@@ -4,6 +4,7 @@ React + TypeScript + Vite frontend for student flow:
 - login via JWT
 - assignments list
 - assignment details + file submission (`multipart/form-data`)
+- UI language: Russian (all user-facing screens translated)
 
 ## Architecture
 

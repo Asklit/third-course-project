@@ -1,8 +1,9 @@
-﻿import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes } from "react-router-dom";
 import { AuthProvider, useAuth } from "./providers/AuthProvider";
 import { LoginPage } from "../pages/login/LoginPage";
 import { AssignmentsPage } from "../pages/assignments/AssignmentsPage";
 import { AssignmentDetailsPage } from "../pages/assignment-details/AssignmentDetailsPage";
+import { AppShell } from "../widgets/layout/AppShell";
 
 function ProtectedRoute({ children }: { children: JSX.Element }) {
   const { isAuthenticated } = useAuth();
@@ -23,7 +24,9 @@ export function App() {
           path="/assignments"
           element={
             <ProtectedRoute>
-              <AssignmentsPage />
+              <AppShell>
+                <AssignmentsPage />
+              </AppShell>
             </ProtectedRoute>
           }
         />
@@ -31,7 +34,9 @@ export function App() {
           path="/assignments/:assignmentId"
           element={
             <ProtectedRoute>
-              <AssignmentDetailsPage />
+              <AppShell>
+                <AssignmentDetailsPage />
+              </AppShell>
             </ProtectedRoute>
           }
         />

@@ -28,7 +28,7 @@ export async function apiClient<T>(path: string, options: ApiOptions = {}): Prom
 
   if (!response.ok) {
     const message = await response.text();
-    throw new Error(message || `API error: ${response.status}`);
+    throw new Error(message || `Ошибка API: ${response.status}`);
   }
 
   return response.json() as Promise<T>;

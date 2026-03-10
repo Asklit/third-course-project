@@ -37,6 +37,10 @@ class Submission(Base):
     status: Mapped[str] = mapped_column(String(32), default="accepted")
 
     files: Mapped[list["SubmissionFile"]] = relationship(back_populates="submission")
+    code_reference: Mapped["SubmissionCodeReference | None"] = relationship(
+        back_populates="submission",
+        uselist=False,
+    )
 
 
 class SubmissionFile(Base):
@@ -50,3 +54,13 @@ class SubmissionFile(Base):
     storage_path: Mapped[str] = mapped_column(String(512), nullable=False)
 
     submission: Mapped[Submission] = relationship(back_populates="files")
+
+
+class SubmissionCodeReference(Base):
+    __tablename__ = "submission_code_references"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    submission_id: Mapped[int] = mapped_column(ForeignKey("submissions.id"), unique=True, nullable=False)
+    url: Mapped[str] = mapped_column(String(1024), nullable=False)
+
+    submission: Mapped[Submission] = relationship(back_populates="code_reference")

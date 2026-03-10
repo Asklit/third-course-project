@@ -1,11 +1,13 @@
-﻿from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import urlparse
+import shutil
 
 import requests
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from src.application.services.security import (
@@ -17,11 +19,12 @@ from src.application.services.security import (
 )
 from src.core.config import settings
 from src.core.logging import configure_logging
-from src.infrastructure.db.models import Assignment, Student, Submission, SubmissionFile
+from src.infrastructure.db.models import Assignment, Student, Submission, SubmissionCodeReference, SubmissionFile
 from src.infrastructure.db.session import Base, engine, get_db_session
 from src.presentation.schemas.schemas import (
     AssignmentDetailsOut,
     AssignmentOut,
+    AssignmentSubmissionStatusOut,
     CallbackPayload,
     LoginRequest,
     RefreshRequest,
@@ -38,6 +41,82 @@ import uuid
 
 logger = logging.getLogger(__name__)
 security = HTTPBearer(auto_error=True)
+
+
+LAB_TOPICS = [
+    "Introduction and tooling",
+    "Data structures",
+    "Functions and modules",
+    "Error handling",
+    "Files and serialization",
+    "OOP basics",
+    "Inheritance and polymorphism",
+    "Iterators and generators",
+    "Testing basics",
+    "Web fundamentals",
+    "REST API basics",
+    "Databases and SQL",
+    "ORM integration",
+    "Async programming",
+    "Deployment and observability",
+    "Final integration lab",
+]
+
+LEGACY_WIKI_SLUG_MAP = {
+    "lr1-intro": "lr01-introduction-and-tooling",
+    "lr2-data-structures": "lr02-data-structures",
+}
+
+VISIBILITY_WINDOW_DAYS = 14
+VISIBLE_ASSIGNMENTS_COUNT = 14
+PAST_DEADLINES_COUNT = 5
+PAST_DEADLINE_STEP_DAYS = 3
+FUTURE_DEADLINE_STEP_DAYS = 1
+
+
+def now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def normalized_slug(raw_slug: str) -> str:
+    return LEGACY_WIKI_SLUG_MAP.get(raw_slug, raw_slug)
+
+
+def assignment_open_at(assignment: Assignment) -> datetime:
+    return assignment.deadline - timedelta(days=VISIBILITY_WINDOW_DAYS)
+
+
+def is_assignment_visible(assignment: Assignment, current_time: datetime) -> bool:
+    return current_time >= assignment_open_at(assignment)
+
+
+def assignment_state(assignment: Assignment, current_time: datetime) -> str:
+    if assignment.status == "closed":
+        return "closed"
+    if current_time > assignment.deadline:
+        return "deadline_passed"
+    return "open"
+
+
+def assignment_submission_requirements(_: Assignment) -> dict[str, Any]:
+    return {
+        "requires_report_docx": True,
+        "code_submission_mode": "file_or_link",
+    }
+
+
+def validate_code_link(link: str) -> bool:
+    if not link:
+        return False
+    try:
+        parsed = urlparse(link)
+    except ValueError:
+        return False
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    host = (parsed.netloc or "").lower()
+    allowed_hosts = {"github.com", "gitlab.com", "drive.google.com", "docs.google.com"}
+    return any(host == h or host.endswith(f".{h}") for h in allowed_hosts)
 
 
 def create_app() -> FastAPI:
@@ -71,32 +150,64 @@ def create_app() -> FastAPI:
 
         with next(get_db_session()) as session:
             if session.scalar(select(Student.id).limit(1)) is None:
-                student = Student(
-                    email="student@example.com",
-                    full_name="Demo Student",
-                    password_hash=hash_password("student123"),
+                session.add(
+                    Student(
+                        email="student@example.com",
+                        full_name="Demo Student",
+                        password_hash=hash_password("student123"),
+                    )
                 )
-                session.add(student)
 
-            if session.scalar(select(Assignment.id).limit(1)) is None:
-                session.add_all(
-                    [
+            legacy_slug_map = [
+                ("lr1-intro", "lr01-introduction-and-tooling", "LR01: Introduction and tooling"),
+                ("lr2-data-structures", "lr02-data-structures", "LR02: Data structures"),
+            ]
+            for old_slug, new_slug, new_title in legacy_slug_map:
+                old_id = session.scalar(select(Assignment.id).where(Assignment.wiki_slug == old_slug).limit(1))
+                new_id = session.scalar(select(Assignment.id).where(Assignment.wiki_slug == new_slug).limit(1))
+                if old_id is not None and new_id is None:
+                    session.execute(
+                        update(Assignment)
+                        .where(Assignment.id == old_id)
+                        .values(wiki_slug=new_slug, title=new_title)
+                    )
+
+            seed_now = now_utc().replace(microsecond=0)
+            for idx, topic in enumerate(LAB_TOPICS, start=1):
+                slug = f"lr{idx:02d}-{topic.lower().replace(' ', '-')}".replace("/", "-")
+                title = f"LR{idx:02d}: {topic}"
+                if idx <= PAST_DEADLINES_COUNT:
+                    days_ago = (PAST_DEADLINES_COUNT - idx + 1) * PAST_DEADLINE_STEP_DAYS
+                    deadline = seed_now - timedelta(days=days_ago)
+                elif idx <= VISIBLE_ASSIGNMENTS_COUNT:
+                    days_ahead = (idx - PAST_DEADLINES_COUNT) * FUTURE_DEADLINE_STEP_DAYS
+                    deadline = seed_now + timedelta(days=days_ahead)
+                else:
+                    deadline = seed_now + timedelta(days=60 + idx)
+                description = f"Complete LR{idx:02d} and upload code + short report."
+
+                existing_id = session.scalar(select(Assignment.id).where(Assignment.wiki_slug == slug).limit(1))
+                if existing_id is None:
+                    session.add(
                         Assignment(
-                            title="LR1: Intro",
-                            description="Basic Python tasks and report.",
-                            deadline=datetime.fromisoformat("2026-03-20T21:00:00+00:00"),
+                            title=title,
+                            description=description,
+                            deadline=deadline,
                             status="open",
-                            wiki_slug="lr1-intro",
-                        ),
-                        Assignment(
-                            title="LR2: Data structures",
-                            description="Collections, complexity, report.",
-                            deadline=datetime.fromisoformat("2026-04-01T21:00:00+00:00"),
+                            wiki_slug=slug,
+                        )
+                    )
+                else:
+                    session.execute(
+                        update(Assignment)
+                        .where(Assignment.id == existing_id)
+                        .values(
+                            title=title,
+                            description=description,
+                            deadline=deadline,
                             status="open",
-                            wiki_slug="lr2-data-structures",
-                        ),
-                    ]
-                )
+                        )
+                    )
 
             session.commit()
 
@@ -108,11 +219,11 @@ def create_app() -> FastAPI:
             payload = decode_token(credentials.credentials, expected_type="access")
             student_id = int(payload["sub"])
         except (TokenError, KeyError, ValueError) as exc:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from exc
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Недействительный токен") from exc
 
         student = db.get(Student, student_id)
         if not student:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Student not found")
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Студент не найден")
 
         return student
 
@@ -124,7 +235,7 @@ def create_app() -> FastAPI:
     def login(payload: LoginRequest, db: Session = Depends(get_db_session)) -> TokenResponse:
         student = db.scalar(select(Student).where(Student.email == payload.email))
         if not student or not verify_password(payload.password, student.password_hash):
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Неверный логин или пароль")
 
         return TokenResponse(
             access_token=create_token(str(student.id), "access", settings.access_token_minutes),
@@ -137,11 +248,11 @@ def create_app() -> FastAPI:
             token_payload = decode_token(payload.refresh_token, expected_type="refresh")
             student_id = int(token_payload["sub"])
         except (TokenError, KeyError, ValueError) as exc:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token") from exc
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Недействительный refresh token") from exc
 
         student = db.get(Student, student_id)
         if not student:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Student not found")
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Студент не найден")
 
         return TokenResponse(
             access_token=create_token(str(student.id), "access", settings.access_token_minutes),
@@ -149,65 +260,246 @@ def create_app() -> FastAPI:
         )
 
     @app.get("/assignments", response_model=list[AssignmentOut])
-    def assignments(_: Student = Depends(get_current_student), db: Session = Depends(get_db_session)) -> list[AssignmentOut]:
-        records = db.scalars(select(Assignment).order_by(Assignment.deadline)).all()
-        return [
-            AssignmentOut(id=row.id, title=row.title, deadline=row.deadline, status=row.status)
-            for row in records
+    def assignments(student: Student = Depends(get_current_student), db: Session = Depends(get_db_session)) -> list[AssignmentOut]:
+        current_time = now_utc()
+        records = db.scalars(select(Assignment).order_by(Assignment.deadline, Assignment.id)).all()
+
+        unique_records: dict[str, Assignment] = {}
+        for record in records:
+            slug = normalized_slug(record.wiki_slug)
+            if slug not in unique_records:
+                unique_records[slug] = record
+
+        visible_records = [
+            row for row in unique_records.values() if is_assignment_visible(row, current_time)
         ]
+
+        assignment_ids = [row.id for row in visible_records]
+        latest_submission_by_assignment: dict[int, Submission] = {}
+        if assignment_ids:
+            submissions = db.scalars(
+                select(Submission)
+                .where(Submission.student_id == student.id, Submission.assignment_id.in_(assignment_ids))
+                .order_by(Submission.submitted_at.desc(), Submission.id.desc())
+            ).all()
+            for row in submissions:
+                if row.assignment_id not in latest_submission_by_assignment:
+                    latest_submission_by_assignment[row.assignment_id] = row
+
+        response: list[AssignmentOut] = []
+        for row in visible_records:
+            latest_submission = latest_submission_by_assignment.get(row.id)
+            if latest_submission:
+                is_late_submission = latest_submission.submitted_at > row.deadline
+                status_value = "submitted_late" if is_late_submission else "submitted"
+            else:
+                status_value = assignment_state(row, current_time)
+            response.append(
+                AssignmentOut(
+                    id=row.id,
+                    title=row.title,
+                    deadline=row.deadline,
+                    status=status_value,
+                )
+            )
+
+        return response
 
     @app.get("/assignments/{assignment_id}", response_model=AssignmentDetailsOut)
     def assignment_details(
         assignment_id: int,
-        _: Student = Depends(get_current_student),
+        student: Student = Depends(get_current_student),
         db: Session = Depends(get_db_session),
     ) -> AssignmentDetailsOut:
+        current_time = now_utc()
         record = db.get(Assignment, assignment_id)
         if not record:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assignment not found")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задание не найдено")
+
+        if not is_assignment_visible(record, current_time):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задание пока недоступно")
+
+        latest_submission = db.scalar(
+            select(Submission)
+            .where(Submission.assignment_id == assignment_id, Submission.student_id == student.id)
+            .order_by(Submission.submitted_at.desc(), Submission.id.desc())
+            .limit(1)
+        )
+
+        wiki_slug = normalized_slug(record.wiki_slug)
+        if latest_submission:
+            is_late_submission = latest_submission.submitted_at > record.deadline
+            status_value = "submitted_late" if is_late_submission else "submitted"
+        else:
+            status_value = assignment_state(record, current_time)
+        requirements = assignment_submission_requirements(record)
 
         return AssignmentDetailsOut(
             id=record.id,
             title=record.title,
             description=record.description,
             deadline=record.deadline,
-            status=record.status,
-            wiki_url=f"/wiki/labs/{record.wiki_slug}",
+            status=status_value,
+            wiki_url=f"/wiki/labs/{wiki_slug}",
+            requires_report_docx=requirements["requires_report_docx"],
+            code_submission_mode=requirements["code_submission_mode"],
+        )
+
+    @app.get("/assignments/{assignment_id}/submission-status", response_model=AssignmentSubmissionStatusOut)
+    def assignment_submission_status(
+        assignment_id: int,
+        student: Student = Depends(get_current_student),
+        db: Session = Depends(get_db_session),
+    ) -> AssignmentSubmissionStatusOut:
+        current_time = now_utc()
+        assignment = db.get(Assignment, assignment_id)
+        if not assignment:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задание не найдено")
+
+        if not is_assignment_visible(assignment, current_time):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задание пока недоступно")
+
+        latest_submission = db.scalar(
+            select(Submission)
+            .where(Submission.assignment_id == assignment_id, Submission.student_id == student.id)
+            .order_by(Submission.submitted_at.desc(), Submission.id.desc())
+            .limit(1)
+        )
+
+        code_link: str | None = None
+        if latest_submission:
+            code_reference = db.scalar(
+                select(SubmissionCodeReference)
+                .where(SubmissionCodeReference.submission_id == latest_submission.id)
+                .limit(1)
+            )
+            code_link = code_reference.url if code_reference else None
+
+        assignment_current_state = assignment_state(assignment, current_time)
+        can_submit = assignment_current_state != "closed"
+        is_late_submission = bool(latest_submission and latest_submission.submitted_at > assignment.deadline)
+
+        return AssignmentSubmissionStatusOut(
+            submitted=latest_submission is not None,
+            submitted_at=latest_submission.submitted_at if latest_submission else None,
+            submission_id=latest_submission.id if latest_submission else None,
+            status="submitted" if latest_submission else "not_submitted",
+            can_submit=can_submit,
+            code_link=code_link,
+            submitted_late=is_late_submission,
         )
 
     @app.post("/assignments/{assignment_id}/submit", response_model=SubmissionResponse)
     def submit_assignment(
         assignment_id: int,
-        files: list[UploadFile] = File(..., alias="files[]"),
+        report_file: UploadFile | None = File(None),
+        code_files: list[UploadFile] | None = File(None, alias="code_files[]"),
         submission_meta: str = Form(...),
         student: Student = Depends(get_current_student),
         db: Session = Depends(get_db_session),
     ) -> SubmissionResponse:
         assignment = db.get(Assignment, assignment_id)
         if not assignment:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assignment not found")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задание не найдено")
+
+        current_time = now_utc()
+        if not is_assignment_visible(assignment, current_time):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Задание пока недоступно")
+
+        state = assignment_state(assignment, current_time)
+        if state == "closed":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Сдача по этому заданию закрыта")
 
         try:
             meta = SubmissionMeta.model_validate_json(submission_meta)
         except Exception as exc:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid submission_meta") from exc
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Некорректный submission_meta") from exc
 
-        submission = Submission(
-            assignment_id=assignment_id,
-            student_id=student.id,
-            comment=meta.comment,
-            submitted_at=meta.submitted_at,
-            status="accepted",
+        if meta.assignment_id != assignment_id:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="assignment_id не совпадает с URL")
+
+        computed_late_submission = current_time > assignment.deadline
+
+        requirements = assignment_submission_requirements(assignment)
+
+        if requirements["requires_report_docx"]:
+            if report_file is None:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Не приложен отчет .docx")
+            report_name = (report_file.filename or "").lower()
+            if not report_name.endswith(".docx"):
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Отчет должен быть в формате .docx")
+
+        normalized_code_mode = meta.code_mode.strip().lower()
+        if normalized_code_mode not in {"file", "link"}:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Неверный режим сдачи кода")
+
+        code_file_items = code_files or []
+        code_link = meta.code_link.strip()
+        if normalized_code_mode == "file" and len(code_file_items) == 0:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Не приложен файл с кодом")
+        if normalized_code_mode == "link" and not validate_code_link(code_link):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Ссылка на код должна вести на GitHub/GitLab/Google Drive",
+            )
+
+        existing_submission = db.scalar(
+            select(Submission)
+            .where(Submission.assignment_id == assignment_id, Submission.student_id == student.id)
+            .order_by(Submission.submitted_at.desc(), Submission.id.desc())
+            .limit(1)
         )
-        db.add(submission)
-        db.flush()
+
+        is_update = existing_submission is not None
+        if is_update:
+            submission = existing_submission
+            submission.comment = meta.comment
+            submission.submitted_at = meta.submitted_at
+            submission.status = "accepted"
+        else:
+            submission = Submission(
+                assignment_id=assignment_id,
+                student_id=student.id,
+                comment=meta.comment,
+                submitted_at=meta.submitted_at,
+                status="accepted",
+            )
+            db.add(submission)
+            db.flush()
 
         saved_files: list[dict[str, Any]] = []
 
         target_dir = os.path.join(settings.submissions_dir, str(student.id), str(submission.id))
         os.makedirs(target_dir, exist_ok=True)
 
-        for upload in files:
+        if is_update:
+            old_files = db.scalars(
+                select(SubmissionFile).where(SubmissionFile.submission_id == submission.id)
+            ).all()
+            for old_file in old_files:
+                if old_file.storage_path and os.path.exists(old_file.storage_path):
+                    try:
+                        os.remove(old_file.storage_path)
+                    except OSError:
+                        logger.warning("failed to remove old file", extra={"action": "submission.update", "status": "warn"})
+                db.delete(old_file)
+
+            old_code_ref = db.scalar(
+                select(SubmissionCodeReference).where(SubmissionCodeReference.submission_id == submission.id).limit(1)
+            )
+            if old_code_ref:
+                db.delete(old_code_ref)
+
+            shutil.rmtree(target_dir, ignore_errors=True)
+            os.makedirs(target_dir, exist_ok=True)
+
+        uploads: list[tuple[UploadFile, str]] = []
+        if report_file is not None:
+            uploads.append((report_file, "report"))
+        for code_file in code_file_items:
+            uploads.append((code_file, "code"))
+
+        for upload, file_role in uploads:
             safe_name = f"{uuid.uuid4()}_{upload.filename}"
             path = os.path.join(target_dir, safe_name)
             content = upload.file.read()
@@ -229,32 +521,51 @@ def create_app() -> FastAPI:
                     "type": row.content_type,
                     "size": row.size,
                     "storage_path": row.storage_path,
+                    "role": file_role,
                 }
             )
+
+        if normalized_code_mode == "link":
+            db.add(SubmissionCodeReference(submission_id=submission.id, url=code_link))
 
         db.commit()
 
         if settings.callback_url:
             payload = CallbackPayload(
-                event_type="submission.created",
+                event_type="submission.updated" if is_update else "submission.created",
                 submission_id=submission.id,
                 student_id=student.id,
                 assignment_id=assignment_id,
                 files=saved_files,
-                created_at=datetime.utcnow(),
+                created_at=now_utc(),
+                message="Работа обновлена" if is_update else "Работа сдана",
+                late_submission=computed_late_submission,
             )
             try:
                 requests.post(settings.callback_url, json=payload.model_dump(mode="json"), timeout=3)
+                logger.info(
+                    "submission notification sent",
+                    extra={"action": "submission_callback", "status": "success", "user_id": student.id},
+                )
             except requests.RequestException as exc:
                 logger.error(
                     "callback delivery failed",
                     extra={"action": "submission_callback", "status": "failed", "user_id": student.id},
                 )
                 logger.debug(str(exc))
+        else:
+            logger.info(
+                "submission notification skipped",
+                extra={"action": "submission_callback", "status": "skipped", "user_id": student.id},
+            )
 
         logger.info(
-            "submission accepted",
-            extra={"action": "submission.create", "status": "success", "user_id": student.id},
+            "submission accepted" if not is_update else "submission updated",
+            extra={
+                "action": "submission.update" if is_update else "submission.create",
+                "status": "success",
+                "user_id": student.id,
+            },
         )
 
         return SubmissionResponse(status="accepted", submission_id=submission.id)
@@ -263,16 +574,17 @@ def create_app() -> FastAPI:
     def wiki_labs(_: Student = Depends(get_current_student)) -> list[WikiLabOut]:
         response = requests.get(f"{settings.wiki_base_url}/labs", timeout=5)
         if not response.ok:
-            raise HTTPException(status_code=502, detail="Wiki service is unavailable")
+            raise HTTPException(status_code=502, detail="Сервис Wiki недоступен")
         return [WikiLabOut(**item) for item in response.json()]
 
     @app.get("/wiki/labs/{slug}", response_model=WikiLabDetailsOut)
     def wiki_lab_details(slug: str, _: Student = Depends(get_current_student)) -> WikiLabDetailsOut:
-        response = requests.get(f"{settings.wiki_base_url}/labs/{slug}", timeout=5)
+        normalized = normalized_slug(slug)
+        response = requests.get(f"{settings.wiki_base_url}/labs/{normalized}", timeout=5)
         if response.status_code == 404:
-            raise HTTPException(status_code=404, detail="Lab material not found")
+            raise HTTPException(status_code=404, detail="Материал для лабораторной не найден")
         if not response.ok:
-            raise HTTPException(status_code=502, detail="Wiki service is unavailable")
+            raise HTTPException(status_code=502, detail="Сервис Wiki недоступен")
         return WikiLabDetailsOut(**response.json())
 
     return app
