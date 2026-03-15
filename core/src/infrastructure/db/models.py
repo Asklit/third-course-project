@@ -64,3 +64,12 @@ class SubmissionCodeReference(Base):
     url: Mapped[str] = mapped_column(String(1024), nullable=False)
 
     submission: Mapped[Submission] = relationship(back_populates="code_reference")
+
+
+class RevokedRefreshToken(Base):
+    __tablename__ = "revoked_refresh_tokens"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    jti: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    student_id: Mapped[int] = mapped_column(ForeignKey("students.id"), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

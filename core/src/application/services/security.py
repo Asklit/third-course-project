@@ -1,4 +1,5 @@
-﻿from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -24,6 +25,7 @@ def create_token(subject: str, token_type: str, minutes: int) -> str:
     now = datetime.now(timezone.utc)
     payload = {
         "sub": subject,
+        "jti": uuid4().hex,
         "token_type": token_type,
         "iat": int(now.timestamp()),
         "exp": int((now + timedelta(minutes=minutes)).timestamp()),
@@ -41,3 +43,4 @@ def decode_token(token: str, expected_type: str) -> dict:
         raise TokenError("Invalid token type")
 
     return payload
+

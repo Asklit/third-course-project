@@ -2,12 +2,14 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlparse
 import shutil
+import re
 
 import requests
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
+from requests import RequestException
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from src.application.services.security import (
@@ -19,7 +21,14 @@ from src.application.services.security import (
 )
 from src.core.config import settings
 from src.core.logging import configure_logging
-from src.infrastructure.db.models import Assignment, Student, Submission, SubmissionCodeReference, SubmissionFile
+from src.infrastructure.db.models import (
+    Assignment,
+    RevokedRefreshToken,
+    Student,
+    Submission,
+    SubmissionCodeReference,
+    SubmissionFile,
+)
 from src.infrastructure.db.session import Base, engine, get_db_session
 from src.presentation.schemas.schemas import (
     AssignmentDetailsOut,
@@ -27,6 +36,8 @@ from src.presentation.schemas.schemas import (
     AssignmentSubmissionStatusOut,
     CallbackPayload,
     LoginRequest,
+    LogoutRequest,
+    LogoutResponse,
     RefreshRequest,
     SubmissionMeta,
     SubmissionResponse,
@@ -43,28 +54,24 @@ logger = logging.getLogger(__name__)
 security = HTTPBearer(auto_error=True)
 
 
-LAB_TOPICS = [
-    "Introduction and tooling",
-    "Data structures",
-    "Functions and modules",
-    "Error handling",
-    "Files and serialization",
-    "OOP basics",
-    "Inheritance and polymorphism",
-    "Iterators and generators",
-    "Testing basics",
-    "Web fundamentals",
-    "REST API basics",
-    "Databases and SQL",
-    "ORM integration",
-    "Async programming",
-    "Deployment and observability",
-    "Final integration lab",
+SUPPORTED_WIKI_LABS = [
+    ("lr01-introduction-and-tooling", "LR01: Introduction and tooling"),
+    ("lr02-data-structures", "LR02: Data structures"),
+    ("lr03-functions-and-modules", "LR03: Functions and modules"),
+    ("lr04-error-handling", "LR04: Error handling"),
+    ("lr05-files-and-serialization", "LR05-06: Files and serialization"),
+    ("lr09-testing-basics", "LR09: Testing basics"),
+    ("lr10-web-fundamentals", "LR10: Web fundamentals"),
+    ("lr11-rest-api-basics", "LR11: REST API basics"),
+    ("lr12-databases-and-sql", "LR12: Databases and SQL"),
+    ("lr13-orm-integration", "LR13: ORM integration"),
+    ("lr14-async-programming", "LR14: Async programming"),
 ]
 
 LEGACY_WIKI_SLUG_MAP = {
     "lr1-intro": "lr01-introduction-and-tooling",
     "lr2-data-structures": "lr02-data-structures",
+    "lr06-oop-basics": "lr05-files-and-serialization",
 }
 
 VISIBILITY_WINDOW_DAYS = 14
@@ -119,6 +126,12 @@ def validate_code_link(link: str) -> bool:
     return any(host == h or host.endswith(f".{h}") for h in allowed_hosts)
 
 
+def is_refresh_token_revoked(db: Session, token_jti: str) -> bool:
+    return db.scalar(
+        select(RevokedRefreshToken.id).where(RevokedRefreshToken.jti == token_jti).limit(1)
+    ) is not None
+
+
 def create_app() -> FastAPI:
     configure_logging()
     app = FastAPI(title=settings.app_name)
@@ -161,6 +174,7 @@ def create_app() -> FastAPI:
             legacy_slug_map = [
                 ("lr1-intro", "lr01-introduction-and-tooling", "LR01: Introduction and tooling"),
                 ("lr2-data-structures", "lr02-data-structures", "LR02: Data structures"),
+                ("lr06-oop-basics", "lr05-files-and-serialization", "LR05-06: Files and serialization"),
             ]
             for old_slug, new_slug, new_title in legacy_slug_map:
                 old_id = session.scalar(select(Assignment.id).where(Assignment.wiki_slug == old_slug).limit(1))
@@ -173,9 +187,7 @@ def create_app() -> FastAPI:
                     )
 
             seed_now = now_utc().replace(microsecond=0)
-            for idx, topic in enumerate(LAB_TOPICS, start=1):
-                slug = f"lr{idx:02d}-{topic.lower().replace(' ', '-')}".replace("/", "-")
-                title = f"LR{idx:02d}: {topic}"
+            for idx, (slug, title) in enumerate(SUPPORTED_WIKI_LABS, start=1):
                 if idx <= PAST_DEADLINES_COUNT:
                     days_ago = (PAST_DEADLINES_COUNT - idx + 1) * PAST_DEADLINE_STEP_DAYS
                     deadline = seed_now - timedelta(days=days_ago)
@@ -184,7 +196,7 @@ def create_app() -> FastAPI:
                     deadline = seed_now + timedelta(days=days_ahead)
                 else:
                     deadline = seed_now + timedelta(days=60 + idx)
-                description = f"Complete LR{idx:02d} and upload code + short report."
+                description = f"Complete {title.split(':', maxsplit=1)[0]} and upload code + short report."
 
                 existing_id = session.scalar(select(Assignment.id).where(Assignment.wiki_slug == slug).limit(1))
                 if existing_id is None:
@@ -208,6 +220,28 @@ def create_app() -> FastAPI:
                             status="open",
                         )
                     )
+
+            allowed_slugs = {item[0] for item in SUPPORTED_WIKI_LABS}
+            unsupported_assignment_ids = session.scalars(
+                select(Assignment.id).where(~Assignment.wiki_slug.in_(allowed_slugs))
+            ).all()
+
+            if unsupported_assignment_ids:
+                unsupported_submission_ids = session.scalars(
+                    select(Submission.id).where(Submission.assignment_id.in_(unsupported_assignment_ids))
+                ).all()
+                if unsupported_submission_ids:
+                    session.execute(
+                        delete(SubmissionFile).where(SubmissionFile.submission_id.in_(unsupported_submission_ids))
+                    )
+                    session.execute(
+                        delete(SubmissionCodeReference).where(
+                            SubmissionCodeReference.submission_id.in_(unsupported_submission_ids)
+                        )
+                    )
+                    session.execute(delete(Submission).where(Submission.id.in_(unsupported_submission_ids)))
+
+                session.execute(delete(Assignment).where(Assignment.id.in_(unsupported_assignment_ids)))
 
             session.commit()
 
@@ -247,17 +281,44 @@ def create_app() -> FastAPI:
         try:
             token_payload = decode_token(payload.refresh_token, expected_type="refresh")
             student_id = int(token_payload["sub"])
+            token_jti = str(token_payload["jti"])
         except (TokenError, KeyError, ValueError) as exc:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Недействительный refresh token") from exc
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token") from exc
+
+        if is_refresh_token_revoked(db, token_jti):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token revoked")
 
         student = db.get(Student, student_id)
         if not student:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Студент не найден")
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Student not found")
 
         return TokenResponse(
             access_token=create_token(str(student.id), "access", settings.access_token_minutes),
             refresh_token=create_token(str(student.id), "refresh", settings.refresh_token_minutes),
         )
+
+    @app.post("/auth/logout", response_model=LogoutResponse)
+    def logout(payload: LogoutRequest, db: Session = Depends(get_db_session)) -> LogoutResponse:
+        try:
+            token_payload = decode_token(payload.refresh_token, expected_type="refresh")
+            student_id = int(token_payload["sub"])
+            token_jti = str(token_payload["jti"])
+            token_exp = datetime.fromtimestamp(int(token_payload["exp"]), tz=timezone.utc)
+        except (TokenError, KeyError, ValueError) as exc:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token") from exc
+
+        if is_refresh_token_revoked(db, token_jti):
+            return LogoutResponse()
+
+        db.add(
+            RevokedRefreshToken(
+                jti=token_jti,
+                student_id=student_id,
+                expires_at=token_exp,
+            )
+        )
+        db.commit()
+        return LogoutResponse()
 
     @app.get("/assignments", response_model=list[AssignmentOut])
     def assignments(student: Student = Depends(get_current_student), db: Session = Depends(get_db_session)) -> list[AssignmentOut]:
@@ -570,24 +631,87 @@ def create_app() -> FastAPI:
 
         return SubmissionResponse(status="accepted", submission_id=submission.id)
 
-    @app.get("/wiki/labs", response_model=list[WikiLabOut])
-    def wiki_labs(_: Student = Depends(get_current_student)) -> list[WikiLabOut]:
-        response = requests.get(f"{settings.wiki_base_url}/labs", timeout=5)
-        if not response.ok:
-            raise HTTPException(status_code=502, detail="Сервис Wiki недоступен")
-        return [WikiLabOut(**item) for item in response.json()]
+    def rewrite_wiki_asset_urls(payload: Any) -> Any:
+        def rewrite_text_assets(text: str) -> str:
+            rewritten = re.sub(r"^/assets/", "/wiki/assets/", text)
+            rewritten = re.sub(r"\(/assets/", "(/wiki/assets/", rewritten)
+            rewritten = re.sub(r"\"/assets/", "\"/wiki/assets/", rewritten)
+            rewritten = re.sub(r"'/assets/", "'/wiki/assets/", rewritten)
+            rewritten = re.sub(r"=/assets/", "=/wiki/assets/", rewritten)
+            return rewritten
 
-    @app.get("/wiki/labs/{slug}", response_model=WikiLabDetailsOut)
-    def wiki_lab_details(slug: str, _: Student = Depends(get_current_student)) -> WikiLabDetailsOut:
+        if isinstance(payload, dict):
+            rewritten: dict[str, Any] = {}
+            for key, value in payload.items():
+                rewritten[key] = rewrite_wiki_asset_urls(value)
+            return rewritten
+        if isinstance(payload, list):
+            return [rewrite_wiki_asset_urls(item) for item in payload]
+        if isinstance(payload, str) and "/assets/" in payload:
+            return rewrite_text_assets(payload)
+        return payload
+
+    def wiki_get(path: str, *, params: dict[str, Any] | None = None, timeout: int = 10) -> requests.Response:
+        try:
+            return requests.get(f"{settings.wiki_base_url}{path}", params=params, timeout=timeout)
+        except RequestException as exc:
+            logger.warning(
+                "wiki request failed",
+                extra={"action": "wiki.proxy", "status": "failed", "path": path, "error": str(exc)},
+            )
+            raise HTTPException(status_code=503, detail="Wiki service temporarily unavailable") from exc
+
+    @app.get("/wiki/labs")
+    def wiki_labs(
+        tag: str | None = None,
+        kind: str | None = None,
+        _: Student = Depends(get_current_student),
+    ) -> Any:
+        response = wiki_get("/labs", params={"tag": tag, "kind": kind}, timeout=10)
+        if not response.ok:
+            raise HTTPException(status_code=502, detail="Wiki service unavailable")
+        return rewrite_wiki_asset_urls(response.json())
+
+    @app.get("/wiki/labs/{slug}")
+    def wiki_lab_details(slug: str, _: Student = Depends(get_current_student)) -> Any:
         normalized = normalized_slug(slug)
-        response = requests.get(f"{settings.wiki_base_url}/labs/{normalized}", timeout=5)
+        response = wiki_get(f"/labs/{normalized}", timeout=10)
         if response.status_code == 404:
-            raise HTTPException(status_code=404, detail="Материал для лабораторной не найден")
+            raise HTTPException(status_code=404, detail="Wiki material not found")
         if not response.ok:
-            raise HTTPException(status_code=502, detail="Сервис Wiki недоступен")
-        return WikiLabDetailsOut(**response.json())
+            raise HTTPException(status_code=502, detail="Wiki service unavailable")
+        return rewrite_wiki_asset_urls(response.json())
 
+    @app.get("/wiki/search")
+    def wiki_search(
+        q: str = "",
+        tag: str | None = None,
+        kind: str | None = None,
+        lab_slug: str | None = None,
+        limit: int = 30,
+        _: Student = Depends(get_current_student),
+    ) -> Any:
+        response = wiki_get(
+            "/search",
+            params={"q": q, "tag": tag, "kind": kind, "lab_slug": lab_slug, "limit": limit},
+            timeout=10,
+        )
+        if not response.ok:
+            raise HTTPException(status_code=502, detail="Wiki service unavailable")
+        return rewrite_wiki_asset_urls(response.json())
+
+    @app.get("/wiki/assets/{asset_path:path}")
+    def wiki_asset(asset_path: str) -> Response:
+        response = wiki_get(f"/assets/{asset_path}", timeout=15)
+        if response.status_code == 404:
+            raise HTTPException(status_code=404, detail="Asset not found")
+        if not response.ok:
+            raise HTTPException(status_code=502, detail="Wiki service unavailable")
+        return Response(content=response.content, media_type=response.headers.get("Content-Type", "application/octet-stream"))
     return app
 
 
 app = create_app()
+
+
+

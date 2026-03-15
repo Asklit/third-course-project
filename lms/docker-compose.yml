@@ -10,6 +10,11 @@
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lms -d lms"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
     networks:
       - lms-net
 
@@ -33,7 +38,13 @@
       MONGO_DB: lms_wiki
       MONGO_COLLECTION: labs
     depends_on:
-      - mongo
+      mongo:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8001/health')\""]
+      interval: 5s
+      timeout: 5s
+      retries: 30
     ports:
       - "8001:8001"
     networks:
@@ -51,8 +62,10 @@
       CALLBACK_URL: ""
       SUBMISSIONS_DIR: /data/submissions
     depends_on:
-      - postgres
-      - wiki
+      postgres:
+        condition: service_healthy
+      wiki:
+        condition: service_healthy
     ports:
       - "8000:8000"
     volumes:

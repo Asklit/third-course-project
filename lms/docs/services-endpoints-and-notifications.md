@@ -19,6 +19,8 @@
 - `GET /login` — страница входа.
 - `GET /assignments` — список работ (требует авторизацию).
 - `GET /assignments/:assignmentId` — карточка конкретной работы (требует авторизацию).
+- `GET /wiki` — отдельная страница базы материалов wiki.
+- `GET /wiki/:slug` — страница конкретного материала ЛР.
 - `*` -> редирект на `/assignments`.
 
 Frontend API base URL:
@@ -45,6 +47,14 @@ Frontend API base URL:
   - Body JSON:
     - `refresh_token: string`
   - Ответ: новый `access_token` + `refresh_token`.
+
+- `POST /auth/logout`
+  - Body JSON:
+    - `refresh_token: string`
+  - Ответ:
+    - `status: "logged_out"`
+  - Поведение:
+    - refresh-токен добавляется в denylist и больше не принимается на `/auth/refresh`.
 
 ### С авторизацией (`Authorization: Bearer <access_token>`)
 
@@ -80,11 +90,20 @@ Frontend API base URL:
 - `GET /wiki/labs/{slug}`
   - Проксирует запрос в Wiki сервис `/labs/{slug}`.
 
+- `GET /wiki/search`
+  - Параметры: `q`, `tag`, `kind`, `lab_slug`, `limit`
+  - Проксирует поиск в Wiki сервис `/search`.
+
+- `GET /wiki/assets/{asset_path}`
+  - Проксирует выдачу статических изображений из wiki-материалов.
+
 ## 4) Wiki API (`http://localhost:8001`)
 
 - `GET /health`
-- `GET /labs` — список материалов (`slug`, `title`)
-- `GET /labs/{slug}` — материал лабораторной (`slug`, `title`, `content_md`, `prerequisites`)
+- `GET /labs` — список материалов (`lab_id`, `slug`, `title`, `tags`, `sections_count`) + фильтры `tag/kind`
+- `GET /labs/{slug}` — детальный материал (`sections[]`, `assets[]`, `stats`, `source_file`)
+- `GET /search` — полнотекстовый поиск по секциям + фильтры
+- `GET /assets/{path}` — изображения/ассеты, извлеченные из docx
 
 ## 5) Уведомления и события
 
@@ -120,6 +139,12 @@ Frontend API base URL:
 2. Core проверяет пользователя в Postgres.
 3. Core возвращает JWT токены.
 4. Frontend сохраняет токен и использует его в `Authorization`.
+
+### Выход пользователя
+
+1. Frontend -> `POST /auth/logout` (core) с `refresh_token`.
+2. Core помечает refresh-токен как отозванный.
+3. Frontend очищает локальную сессию (access/refresh токены).
 
 ### Просмотр заданий
 

@@ -20,15 +20,38 @@ export async function apiClient<T>(path: string, options: ApiOptions = {}): Prom
     headers.set("Authorization", `Bearer ${token}`);
   }
 
-  const response = await fetch(`${env.apiBaseUrl}${path}`, {
-    method: options.method ?? "GET",
-    body: options.body,
-    headers,
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${env.apiBaseUrl}${path}`, {
+      method: options.method ?? "GET",
+      body: options.body,
+      headers,
+    });
+  } catch {
+    throw new Error("Не удалось подключиться к серверу. Проверьте, что backend запущен.");
+  }
 
   if (!response.ok) {
-    const message = await response.text();
-    throw new Error(message || `Ошибка API: ${response.status}`);
+    const raw = await response.text();
+    let detail = raw;
+    try {
+      const parsed = JSON.parse(raw) as { detail?: string };
+      if (parsed.detail) {
+        detail = parsed.detail;
+      }
+    } catch {
+      // keep raw text
+    }
+
+    if (response.status === 401) {
+      throw new Error("Сессия истекла. Войдите заново.");
+    }
+
+    if (response.status >= 500) {
+      throw new Error(detail ? `Ошибка сервера (${response.status}): ${detail}` : `Ошибка сервера (${response.status}).`);
+    }
+
+    throw new Error(detail || `Ошибка API: ${response.status}`);
   }
 
   return response.json() as Promise<T>;

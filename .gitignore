@@ -201,6 +201,10 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
+# LMS wiki generated/source artifacts
+wiki/materials/curated/
+wiki/materials/sources/
+
 # Marimo
 marimo/_static/
 marimo/_lsp/

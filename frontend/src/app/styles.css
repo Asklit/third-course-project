@@ -133,6 +133,44 @@ p {
   animation: riseIn 0.4s ease;
 }
 
+.logout-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  background: rgba(7, 20, 37, 0.45);
+  backdrop-filter: blur(4px);
+}
+
+.logout-modal {
+  width: min(460px, 100%);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: linear-gradient(180deg, #ffffff, #f6faff);
+  padding: var(--space-5);
+  display: grid;
+  gap: var(--space-3);
+  box-shadow: 0 22px 46px rgba(9, 30, 55, 0.28);
+  animation: popIn 0.25s ease;
+}
+
+.logout-modal__eyebrow {
+  margin: 0;
+  font-size: 0.77rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--brand);
+  font-weight: 800;
+}
+
+.logout-modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
 .auth-page {
   min-height: 100vh;
   display: grid;
@@ -170,6 +208,92 @@ p {
 
 .panel--wiki {
   background: linear-gradient(170deg, #f8fbff, #f2f7fc);
+}
+
+.wiki-hero {
+  background: linear-gradient(170deg, #ffffff, #f2f9ff);
+}
+
+.wiki-search-form {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.wiki-search-form__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.wiki-search-results {
+  margin-top: var(--space-3);
+  display: grid;
+  gap: var(--space-2);
+}
+
+.wiki-search-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: var(--space-3);
+  background: #fff;
+  display: grid;
+  gap: 6px;
+}
+
+.wiki-search-card:hover {
+  text-decoration: none;
+  border-color: #a8c2df;
+  background: #f9fcff;
+}
+
+.wiki-search-card__head {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.wiki-search-card__section {
+  font-weight: 700;
+}
+
+.wiki-labs-grid {
+  margin-top: var(--space-3);
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--space-3);
+}
+
+.wiki-lab-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  padding: var(--space-3);
+  display: grid;
+  gap: var(--space-2);
+}
+
+.wiki-lab-card:hover {
+  text-decoration: none;
+  background: #f7fbff;
+}
+
+.wiki-toc__list {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.wiki-toc__link {
+  display: inline-flex;
+  width: fit-content;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  padding: 6px 12px;
+  background: #fff;
+}
+
+.wiki-section {
+  scroll-margin-top: 88px;
 }
 
 .dashboard-hero {
@@ -268,6 +392,13 @@ p {
   gap: var(--space-4);
 }
 
+.assignment-form-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+}
+
 .field {
   display: grid;
   gap: var(--space-2);
@@ -279,6 +410,7 @@ p {
 }
 
 input,
+select,
 textarea {
   width: 100%;
   font: inherit;
@@ -289,6 +421,7 @@ textarea {
 }
 
 input:focus,
+select:focus,
 textarea:focus {
   outline: 0;
   border-color: #89b3e6;
@@ -618,6 +751,138 @@ input[type="radio"] {
   font-family: "Consolas", "Courier New", monospace;
 }
 
+.markdown .md-image {
+  margin: 12px 0;
+}
+
+.markdown .md-image img {
+  max-width: 100%;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  box-shadow: 0 8px 18px rgba(15, 41, 75, 0.12);
+}
+
+.markdown .md-image--file {
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  background: #fff;
+  padding: 10px 12px;
+}
+
+.markdown blockquote {
+  margin: 10px 0;
+  border-left: 4px solid #8eb7e6;
+  background: #f7fbff;
+  padding: 8px 12px;
+  color: #375275;
+}
+
+.markdown .code-block {
+  margin: 10px 0 14px;
+}
+
+.markdown .code-block__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border: 1px solid #34475f;
+  border-bottom: 0;
+  border-radius: 10px 10px 0 0;
+  padding: 6px 10px;
+  background: #111c2b;
+  color: #d7e4f5;
+  font-size: 0.82rem;
+}
+
+.markdown .code-lang {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.markdown .code-copy-btn {
+  border: 1px solid #4b6686;
+  border-radius: 7px;
+  background: #1f324a;
+  color: #dfe8f2;
+  font-size: 0.78rem;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.markdown .code-copy-btn:hover {
+  background: #2f4968;
+}
+
+.markdown .code-block pre {
+  margin: 0;
+  border-radius: 0 0 10px 10px;
+  border: 1px solid #34475f;
+}
+
+.markdown .math-inline {
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: #eef5ff;
+  color: #1d4d84;
+  font-family: "Consolas", "Courier New", monospace;
+}
+
+.markdown .math-block {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #f3f8ff;
+  border: 1px solid #cfe0f4;
+  font-family: "Consolas", "Courier New", monospace;
+  overflow-x: auto;
+}
+
+.markdown .md-table-wrap {
+  margin: 12px 0;
+  overflow-x: auto;
+}
+
+.markdown .md-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 520px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  table-layout: fixed;
+}
+
+.markdown .md-table th,
+.markdown .md-table td {
+  border: 1px solid var(--line);
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.markdown .md-table td img {
+  max-width: 320px;
+  width: 100%;
+  height: auto;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+
+.markdown .md-table th {
+  background: #eef5ff;
+  color: #1d4d84;
+}
+
+.markdown p,
+.markdown li,
+.markdown blockquote {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 @keyframes riseIn {
   from {
     opacity: 0;
@@ -663,5 +928,14 @@ input[type="radio"] {
 
   .mode-selector {
     grid-template-columns: 1fr;
+  }
+
+  .wiki-search-form__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .assignment-form-head {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }

@@ -3,6 +3,8 @@ import { AuthProvider, useAuth } from "./providers/AuthProvider";
 import { LoginPage } from "../pages/login/LoginPage";
 import { AssignmentsPage } from "../pages/assignments/AssignmentsPage";
 import { AssignmentDetailsPage } from "../pages/assignment-details/AssignmentDetailsPage";
+import { WikiPage } from "../pages/wiki/WikiPage";
+import { WikiLabPage } from "../pages/wiki/WikiLabPage";
 import { AppShell } from "../widgets/layout/AppShell";
 
 function ProtectedRoute({ children }: { children: JSX.Element }) {
@@ -36,6 +38,26 @@ export function App() {
             <ProtectedRoute>
               <AppShell>
                 <AssignmentDetailsPage />
+              </AppShell>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/wiki"
+          element={
+            <ProtectedRoute>
+              <AppShell>
+                <WikiPage />
+              </AppShell>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/wiki/:slug"
+          element={
+            <ProtectedRoute>
+              <AppShell>
+                <WikiLabPage />
               </AppShell>
             </ProtectedRoute>
           }

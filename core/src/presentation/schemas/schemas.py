@@ -19,6 +19,14 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
 
 
+class LogoutRequest(BaseModel):
+    refresh_token: str
+
+
+class LogoutResponse(BaseModel):
+    status: str = "logged_out"
+
+
 class AssignmentOut(BaseModel):
     id: int
     title: str
