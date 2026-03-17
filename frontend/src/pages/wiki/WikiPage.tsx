@@ -1,4 +1,4 @@
-﻿import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { fetchWikiLabs } from "../../entities/wiki/api/fetchWikiLabs";
 import { searchWiki } from "../../entities/wiki/api/searchWiki";
@@ -26,6 +26,7 @@ export function WikiPage() {
   const q = searchParams.get("q") ?? "";
   const tag = searchParams.get("tag") ?? "";
   const kind = searchParams.get("kind") ?? "";
+  const labSlug = searchParams.get("lab") ?? "";
 
   useEffect(() => {
     async function loadLabs() {
@@ -46,8 +47,15 @@ export function WikiPage() {
     async function loadSearch() {
       setSearchLoading(true);
       try {
-        const data = await searchWiki({ q, tag: tag || undefined, kind: kind || undefined, limit: 50 });
+        const data = await searchWiki({
+          q,
+          tag: tag || undefined,
+          kind: kind || undefined,
+          lab_slug: labSlug || undefined,
+          limit: 50,
+        });
         setResults(data.items);
+        setError(null);
       } catch (loadError) {
         setError(loadError instanceof Error ? loadError.message : "Не удалось выполнить поиск");
       } finally {
@@ -56,7 +64,7 @@ export function WikiPage() {
     }
 
     void loadSearch();
-  }, [q, tag, kind]);
+  }, [q, tag, kind, labSlug]);
 
   const availableTags = useMemo(() => {
     const tags = new Set<string>();
@@ -71,6 +79,7 @@ export function WikiPage() {
     const nextQ = String(form.get("q") ?? "").trim();
     const nextTag = String(form.get("tag") ?? "").trim();
     const nextKind = String(form.get("kind") ?? "").trim();
+    const nextLab = String(form.get("lab") ?? "").trim();
     if (nextQ) {
       next.set("q", nextQ);
     }
@@ -79,6 +88,9 @@ export function WikiPage() {
     }
     if (nextKind) {
       next.set("kind", nextKind);
+    }
+    if (nextLab) {
+      next.set("lab", nextLab);
     }
     setSearchParams(next);
   }
@@ -89,17 +101,61 @@ export function WikiPage() {
         <p className="eyebrow">Wiki</p>
         <h1>База материалов лабораторных</h1>
         <p className="meta">
-          Поиск по материалам, методическим указаниям, кодам и блокам работ (цели, теория, задания, варианты).
+          Здесь можно открыть лабораторную целиком или быстро найти конкретный фрагмент по ключевым словам,
+          тегам и типу раздела.
         </p>
       </article>
 
-      <form className="panel wiki-search-form" onSubmit={onSearchSubmit}>
-        <div className="field">
-          <span className="field__label">Поисковый запрос</span>
-          <input name="q" defaultValue={q} placeholder="Пример: рекурсия в C#, LINQ, коллекции" />
+      {loading ? <p>Загружаю базу wiki...</p> : null}
+      {error ? <p className="error-text">{error}</p> : null}
+
+      <article className="panel">
+        <div className="wiki-section-head">
+          <div>
+            <p className="eyebrow">Раздел 1</p>
+            <h2>Открыть лабораторную целиком</h2>
+          </div>
+          <p className="meta">Каждая карточка открывает полную wiki-страницу выбранной ЛР со всеми материалами подряд.</p>
         </div>
 
-        <div className="wiki-search-form__grid">
+        <div className="wiki-labs-grid">
+          {labs.map((lab) => (
+            <Link className="wiki-lab-card" key={lab.slug} to={`/wiki/${lab.slug}`}>
+              <h3>{lab.title}</h3>
+              <p className="meta">Разделов: {lab.sections_count}</p>
+              <p className="meta">Теги: {lab.tags.join(", ") || "—"}</p>
+            </Link>
+          ))}
+        </div>
+      </article>
+
+      <form className="panel wiki-search-form" onSubmit={onSearchSubmit}>
+        <div className="wiki-section-head">
+          <div>
+            <p className="eyebrow">Раздел 2</p>
+            <h2>Поиск по материалам</h2>
+          </div>
+          <p className="meta">Найдите конкретный фрагмент по ключевым словам, тегам или типу раздела.</p>
+        </div>
+
+        <div className="field">
+          <span className="field__label">Поисковый запрос</span>
+          <input name="q" defaultValue={q} placeholder="Пример: рекурсия, console, LINQ, коллекции" />
+        </div>
+
+        <div className="wiki-search-form__grid wiki-search-form__grid--triple">
+          <label className="field">
+            <span className="field__label">Лабораторная</span>
+            <select name="lab" defaultValue={labSlug}>
+              <option value="">Все ЛР</option>
+              {labs.map((lab) => (
+                <option key={lab.slug} value={lab.slug}>
+                  {lab.title}
+                </option>
+              ))}
+            </select>
+          </label>
+
           <label className="field">
             <span className="field__label">Тег</span>
             <select name="tag" defaultValue={tag}>
@@ -124,25 +180,23 @@ export function WikiPage() {
           </label>
         </div>
 
-        <button className="btn btn--primary" type="submit">
-          Найти
-        </button>
-        <button
-          className="btn btn--ghost"
-          type="button"
-          onClick={() => setSearchParams(new URLSearchParams())}
-        >
-          Сбросить фильтры
-        </button>
+        <div className="wiki-search-actions">
+          <button className="btn btn--primary" type="submit">
+            Найти
+          </button>
+          <button className="btn btn--ghost" type="button" onClick={() => setSearchParams(new URLSearchParams())}>
+            Сбросить фильтры
+          </button>
+        </div>
       </form>
 
-      {loading ? <p>Загружаю базу wiki...</p> : null}
-      {error ? <p className="error-text">{error}</p> : null}
       {searchLoading ? <p>Выполняю поиск...</p> : null}
 
       <article className="panel">
         <h2>Результаты поиска ({results.length})</h2>
-        {results.length === 0 ? <p className="meta">Ничего не найдено. Проверьте запрос и текущие фильтры.</p> : null}
+        {results.length === 0 ? (
+          <p className="meta">Ничего не найдено. Попробуйте сократить запрос или убрать часть фильтров.</p>
+        ) : null}
 
         <div className="wiki-search-results">
           {results.map((result, index) => (
@@ -157,19 +211,6 @@ export function WikiPage() {
               </div>
               <p className="wiki-search-card__section">{result.section_title}</p>
               <p className="meta">{result.snippet}</p>
-            </Link>
-          ))}
-        </div>
-      </article>
-
-      <article className="panel">
-        <h2>Материалы по ЛР</h2>
-        <div className="wiki-labs-grid">
-          {labs.map((lab) => (
-            <Link className="wiki-lab-card" key={lab.slug} to={`/wiki/${lab.slug}`}>
-              <h3>{lab.title}</h3>
-              <p className="meta">Разделов: {lab.sections_count}</p>
-              <p className="meta">Теги: {lab.tags.join(", ") || "—"}</p>
             </Link>
           ))}
         </div>

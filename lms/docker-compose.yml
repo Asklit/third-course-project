@@ -28,6 +28,17 @@
     networks:
       - lms-net
 
+  meilisearch:
+    image: getmeili/meilisearch:v1.12
+    container_name: lms-meilisearch
+    environment:
+      MEILI_NO_ANALYTICS: "true"
+      MEILI_ENV: development
+    ports:
+      - "7700:7700"
+    networks:
+      - lms-net
+
   wiki:
     build:
       context: ../wiki
@@ -37,8 +48,13 @@
       MONGO_URL: mongodb://mongo:27017
       MONGO_DB: lms_wiki
       MONGO_COLLECTION: labs
+      MEILI_ENABLED: "true"
+      MEILI_URL: http://meilisearch:7700
+      MEILI_INDEX: wiki_sections
     depends_on:
       mongo:
+        condition: service_started
+      meilisearch:
         condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8001/health')\""]

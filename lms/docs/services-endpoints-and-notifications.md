@@ -1,191 +1,228 @@
-﻿# Карта сервисов и API (LMS)
+# Карта сервисов и API
 
-Документ описывает, какие эндпоинты есть в каждой части системы, какие события/уведомления отправляются и как ходят данные между сервисами.
+Документ фиксирует актуальные сервисы, публичные endpoint'ы и потоки данных между ними.
 
-## 1) Сервисы и роли
+## Сервисы
 
-- `frontend` (порт `5173`): UI для студента.
-- `core` (порт `8000`): основная бизнес-логика, авторизация, задания, сдача работ.
-- `wiki` (порт `8001`): выдача материалов лабораторных.
-- `postgres` (порт `5432`): хранение пользователей, заданий, сдач, метаданных файлов.
-- `mongo` (порт `27017`): хранение wiki-материалов.
+- `frontend` (`5173`) - пользовательский интерфейс студента.
+- `core` (`8000`) - авторизация, задания, прием сдачи, прокси к `wiki`.
+- `wiki` (`8001`) - материалы лабораторных и поиск по ним.
+- `postgres` (`5432`) - пользователи, задания, сдачи.
+- `mongo` (`27017`) - материалы wiki.
+- `meilisearch` (`7700`) - внутренний поисковый движок `wiki`.
 
-См. compose: `lms/docker-compose.yml`.
+## Frontend маршруты
 
-## 2) Frontend маршруты
+- `GET /login`
+- `GET /assignments`
+- `GET /assignments/:assignmentId`
+- `GET /wiki`
+- `GET /wiki/:slug`
 
-Браузерные маршруты (React Router):
+Frontend обращается к backend через `VITE_API_BASE_URL`, по умолчанию `http://localhost:8000`.
 
-- `GET /login` — страница входа.
-- `GET /assignments` — список работ (требует авторизацию).
-- `GET /assignments/:assignmentId` — карточка конкретной работы (требует авторизацию).
-- `GET /wiki` — отдельная страница базы материалов wiki.
-- `GET /wiki/:slug` — страница конкретного материала ЛР.
-- `*` -> редирект на `/assignments`.
+## Core API
 
-Frontend API base URL:
-
-- `VITE_API_BASE_URL` (по умолчанию `http://localhost:8000`).
-
-## 3) Core API (`http://localhost:8000`)
+Базовый URL: `http://localhost:8000`
 
 ### Без авторизации
 
 - `GET /health`
-  - Ответ: `{ "status": "ok" }`
+  - ответ: `{ "status": "ok" }`
 
 - `POST /auth/login`
-  - Body JSON:
-    - `email: string`
-    - `password: string`
-  - Ответ:
-    - `access_token: string`
-    - `refresh_token: string`
-    - `token_type: "bearer"`
+  - body:
+    - `email`
+    - `password`
+  - ответ:
+    - `access_token`
+    - `refresh_token`
+    - `token_type`
 
 - `POST /auth/refresh`
-  - Body JSON:
-    - `refresh_token: string`
-  - Ответ: новый `access_token` + `refresh_token`.
+  - body:
+    - `refresh_token`
+  - ответ:
+    - новый `access_token`
+    - новый `refresh_token`
+    - `token_type`
 
 - `POST /auth/logout`
-  - Body JSON:
-    - `refresh_token: string`
-  - Ответ:
+  - body:
+    - `refresh_token`
+  - ответ:
     - `status: "logged_out"`
-  - Поведение:
-    - refresh-токен добавляется в denylist и больше не принимается на `/auth/refresh`.
 
-### С авторизацией (`Authorization: Bearer <access_token>`)
+### С авторизацией
+
+Все endpoint'ы ниже требуют `Authorization: Bearer <access_token>`, кроме `/wiki/assets/...`.
 
 - `GET /assignments`
-  - Возвращает видимые задания для студента.
-  - `status` может быть: `open | deadline_passed | submitted | submitted_late | closed`.
+  - список доступных заданий студента
+  - статус задания: `open | deadline_passed | submitted | submitted_late | closed`
 
 - `GET /assignments/{assignment_id}`
-  - Детали задания: `title`, `description`, `deadline`, `wiki_url`, требования к сдаче.
+  - детальная карточка задания
+  - основные поля:
+    - `title`
+    - `description`
+    - `deadline`
+    - `wiki_url`
+    - `requires_report_docx`
+    - `code_submission_mode`
 
 - `GET /assignments/{assignment_id}/submission-status`
-  - Статус сдачи текущим студентом:
-    - `submitted`, `submitted_at`, `submission_id`, `can_submit`, `code_link`, `submitted_late`.
+  - возвращает текущее состояние сдачи:
+    - `submitted`
+    - `submitted_at`
+    - `submission_id`
+    - `status`
+    - `can_submit`
+    - `report_file_name`
+    - `code_link`
+    - `code_file_names`
+    - `report_submitted`
+    - `code_submitted`
+    - `submitted_late`
 
 - `POST /assignments/{assignment_id}/submit`
-  - `multipart/form-data`:
-    - `report_file` (один файл, .docx)
-    - `code_files[]` (0..N файлов, если режим `file`)
-    - `submission_meta` (JSON-строка)
-  - Структура `submission_meta`:
+  - `multipart/form-data`
+  - поля:
+    - `report_file` - один `.docx`, необязателен
+    - `code_files[]` - 0..N файлов кода, необязательны
+    - `submission_meta` - JSON-строка
+  - `submission_meta`:
     - `assignment_id: int`
     - `comment: string`
     - `submitted_at: ISO datetime`
     - `code_mode: "file" | "link"`
-    - `code_link: string` (если `code_mode=link`)
-  - Ответ:
-    - `status: "accepted"`
-    - `submission_id: int` (это ID записи сдачи, не номер лабораторной)
+    - `code_link: string`
+    - `delete_report: boolean`
+    - `delete_code: boolean`
+  - поддерживаемые сценарии:
+    - первая сдача отчета и кода
+    - сдача только отчета
+    - сдача только кода
+    - обновление только отчета
+    - обновление только кода
+    - удаление только отчета
+    - удаление только кода
+  - ограничения:
+    - нельзя удалить отчет и код одновременно, если после этого не остается ни одной части
+    - для ссылочного кода допустимы только разрешенные хосты
 
 - `GET /wiki/labs`
-  - Проксирует запрос в Wiki сервис `/labs`.
+  - прокси к `wiki /labs`
 
 - `GET /wiki/labs/{slug}`
-  - Проксирует запрос в Wiki сервис `/labs/{slug}`.
+  - прокси к `wiki /labs/{slug}`
 
 - `GET /wiki/search`
-  - Параметры: `q`, `tag`, `kind`, `lab_slug`, `limit`
-  - Проксирует поиск в Wiki сервис `/search`.
+  - параметры:
+    - `q`
+    - `tag`
+    - `kind`
+    - `lab_slug`
+    - `limit`
+  - прокси к `wiki /search`
 
 - `GET /wiki/assets/{asset_path}`
-  - Проксирует выдачу статических изображений из wiki-материалов.
+  - прокси к статическим ассетам wiki
+  - Bearer token не требуется
 
-## 4) Wiki API (`http://localhost:8001`)
+## Wiki API
+
+Базовый URL: `http://localhost:8001`
 
 - `GET /health`
-- `GET /labs` — список материалов (`lab_id`, `slug`, `title`, `tags`, `sections_count`) + фильтры `tag/kind`
-- `GET /labs/{slug}` — детальный материал (`sections[]`, `assets[]`, `stats`, `source_file`)
-- `GET /search` — полнотекстовый поиск по секциям + фильтры
-- `GET /assets/{path}` — изображения/ассеты, извлеченные из docx
+- `GET /labs`
+- `GET /labs/{slug}`
+- `GET /search`
+- `GET /assets/{path}`
 
-## 5) Уведомления и события
+`wiki` не должен использоваться клиентом напрямую. Внешние клиенты ходят через `core`.
 
-### Callback из `core` во внешний сервис
+## Уведомления и события
 
-`core` может отправлять HTTP callback при сдаче/обновлении работы, если задан `CALLBACK_URL`.
+### Callback из `core`
 
-- Триггер:
-  - новая сдача -> `event_type = submission.created`
-  - обновление сдачи -> `event_type = submission.updated`
-- Способ отправки:
-  - `POST {CALLBACK_URL}`
-  - `Content-Type: application/json`
-- Payload:
-  - `event_type`
-  - `submission_id`
-  - `student_id`
-  - `assignment_id`
-  - `files[]` (имя/тип/размер/путь/роль)
-  - `created_at`
-  - `message`
-  - `late_submission` (вычисляется на backend)
+Если задан `CALLBACK_URL`, `core` отправляет HTTP callback при создании или обновлении сдачи.
 
-Если `CALLBACK_URL` пустой, callback пропускается.
+Типы событий:
 
-Других нотификаций (email/ws/telegram) в текущей реализации нет.
+- `submission.created`
+- `submission.updated`
 
-## 6) Потоки данных
+Payload содержит:
 
-### Вход пользователя
+- `event_type`
+- `submission_id`
+- `student_id`
+- `assignment_id`
+- `files[]`
+- `created_at`
+- `message`
+- `late_submission`
 
-1. Frontend -> `POST /auth/login` (core)
-2. Core проверяет пользователя в Postgres.
-3. Core возвращает JWT токены.
-4. Frontend сохраняет токен и использует его в `Authorization`.
+Если внешний сервис недоступен, сдача не теряется: данные уже сохранены в `postgres` и на диске, а ошибка уходит в лог.
 
-### Выход пользователя
+## Потоки данных
 
-1. Frontend -> `POST /auth/logout` (core) с `refresh_token`.
-2. Core помечает refresh-токен как отозванный.
-3. Frontend очищает локальную сессию (access/refresh токены).
+### Вход
+
+1. Frontend вызывает `POST /auth/login`.
+2. `core` проверяет пользователя в `postgres`.
+3. `core` выдает JWT токены.
+4. Frontend использует `access_token` в `Authorization`.
+
+### Выход
+
+1. Frontend вызывает `POST /auth/logout`.
+2. `core` добавляет refresh token в denylist.
+3. Frontend очищает локальную сессию.
 
 ### Просмотр заданий
 
-1. Frontend -> `GET /assignments` (core)
-2. Core читает задания/сдачи из Postgres, рассчитывает статус.
-3. Frontend показывает список.
+1. Frontend -> `GET /assignments`
+2. `core` читает `assignments` и `submissions` из `postgres`
+3. `core` рассчитывает итоговый статус для студента
 
-### Просмотр материалов
+### Просмотр wiki
 
-1. Frontend -> `GET /wiki/labs/{slug}` через core.
-2. Core -> Wiki `/labs/{slug}`.
-3. Wiki читает Mongo и возвращает markdown.
-4. Core отдает ответ frontend.
+1. Frontend -> `GET /wiki/labs` или `GET /wiki/labs/{slug}` через `core`
+2. `core` проксирует запрос в `wiki`
+3. `wiki` читает данные из `mongo`
+4. `wiki` при необходимости использует `meilisearch` для поиска
 
 ### Сдача работы
 
-1. Frontend -> `POST /assignments/{id}/submit` (multipart).
-2. Core валидирует:
-   - доступность задания,
-   - формат отчета,
-   - режим сдачи кода (`file`/`link`),
-   - допустимый хост для ссылки.
-3. Core сохраняет:
-   - метаданные в Postgres,
-   - файлы в `SUBMISSIONS_DIR`.
-4. При наличии `CALLBACK_URL` отправляет callback.
+1. Frontend -> `POST /assignments/{id}/submit`
+2. `core` валидирует дедлайн, формат файлов и `submission_meta`
+3. `core` обновляет запись сдачи в `postgres`
+4. `core` сохраняет файлы в `data/submissions`
+5. `core` обновляет `submission.json`
+6. при наличии `CALLBACK_URL` отправляется callback
 
-## 7) Где физически хранятся данные
+## Где физически лежат данные
 
-- Postgres данные: volume `postgres_data`.
-- Mongo данные: volume `mongo_data`.
-- Файлы сдач (`core`): bind-mount
-  - host: `data/submissions`
-  - container: `/data/submissions`
+- данные `postgres`: volume `postgres_data`
+- данные `mongo`: volume `mongo_data`
+- файлы сдач: bind mount `data/submissions:/data/submissions`
 
-Структура файлов сдачи:
+Текущая структура файлов сдачи:
 
-- `data/submissions/{student_id}/{submission_id}/{uuid}_{original_filename}`
+```text
+data/submissions/
+  student-1/
+    assignment-1-lr01-introduction-and-tooling/
+      report/
+      code/
+      submission.json
+```
 
-## 8) Полезные замечания
+## Что важно помнить
 
-- `submission_id` — это ID попытки сдачи, не номер лабораторной.
-- В ответах сервис добавляет `X-Trace-Id` для трассировки запросов.
-- Ошибки в `core`/`wiki` возвращаются как HTTP-коды с `detail`.
+- `submission_id` - это ID записи сдачи, а не номер лабораторной.
+- `assignment_id` - это ID задания в `core`.
+- `wiki_slug` - это строковый идентификатор ЛР в `wiki`.
+- `core` остается единой точкой входа для web и mobile клиентов.

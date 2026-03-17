@@ -47,7 +47,11 @@ class AssignmentSubmissionStatusOut(BaseModel):
     submission_id: int | None = None
     status: str
     can_submit: bool
+    report_file_name: str | None = None
     code_link: str | None = None
+    code_file_names: list[str] | None = None
+    report_submitted: bool = False
+    code_submitted: bool = False
     submitted_late: bool = False
 
 
@@ -57,6 +61,8 @@ class SubmissionMeta(BaseModel):
     submitted_at: datetime
     code_mode: str = Field(pattern="^(file|link)$")
     code_link: str = ""
+    delete_report: bool = False
+    delete_code: bool = False
 
 
 class SubmissionResponse(BaseModel):

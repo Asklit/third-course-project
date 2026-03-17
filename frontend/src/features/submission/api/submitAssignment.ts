@@ -6,6 +6,8 @@ export type SubmissionMeta = {
   submitted_at: string;
   code_mode: "file" | "link";
   code_link?: string;
+  delete_report?: boolean;
+  delete_code?: boolean;
 };
 
 export function submitAssignment(

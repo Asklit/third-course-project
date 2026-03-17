@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
+import json
 from typing import Any
 from urllib.parse import urlparse
-import shutil
 import re
 
 import requests
@@ -124,6 +124,57 @@ def validate_code_link(link: str) -> bool:
     host = (parsed.netloc or "").lower()
     allowed_hosts = {"github.com", "gitlab.com", "drive.google.com", "docs.google.com"}
     return any(host == h or host.endswith(f".{h}") for h in allowed_hosts)
+
+
+def infer_submission_file_role(file_name: str, content_type: str | None = None) -> str:
+    lowered_name = file_name.lower()
+    lowered_type = (content_type or "").lower()
+    if lowered_name.endswith(".docx") or "wordprocessingml.document" in lowered_type:
+        return "report"
+    return "code"
+
+
+def sanitize_storage_component(value: str, fallback: str = "file") -> str:
+    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "-", value).strip()
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    cleaned = cleaned.rstrip(". ")
+    return cleaned or fallback
+
+
+def assignment_storage_dir(student_id: int, assignment: Assignment) -> str:
+    wiki_slug = sanitize_storage_component(normalized_slug(assignment.wiki_slug), f"assignment-{assignment.id}")
+    return os.path.join(
+        settings.submissions_dir,
+        f"student-{student_id}",
+        f"assignment-{assignment.id}-{wiki_slug}",
+    )
+
+
+def write_submission_manifest(
+    target_dir: str,
+    *,
+    student: Student,
+    assignment: Assignment,
+    submission: Submission,
+    report_file_name: str | None,
+    code_file_names: list[str],
+    code_link: str | None,
+) -> None:
+    manifest = {
+        "student_id": student.id,
+        "student_email": student.email,
+        "assignment_id": assignment.id,
+        "assignment_title": assignment.title,
+        "wiki_slug": normalized_slug(assignment.wiki_slug),
+        "submission_id": submission.id,
+        "submitted_at": submission.submitted_at.isoformat(),
+        "report_file_name": report_file_name,
+        "code_file_names": code_file_names,
+        "code_link": code_link,
+    }
+    manifest_path = os.path.join(target_dir, "submission.json")
+    with open(manifest_path, "w", encoding="utf-8") as output:
+        json.dump(manifest, output, ensure_ascii=False, indent=2)
 
 
 def is_refresh_token_revoked(db: Session, token_jti: str) -> bool:
@@ -428,7 +479,18 @@ def create_app() -> FastAPI:
         )
 
         code_link: str | None = None
+        report_file_name: str | None = None
+        code_file_names: list[str] = []
         if latest_submission:
+            submission_files = db.scalars(
+                select(SubmissionFile).where(SubmissionFile.submission_id == latest_submission.id)
+            ).all()
+            for item in submission_files:
+                role = infer_submission_file_role(item.file_name, item.content_type)
+                if role == "report" and report_file_name is None:
+                    report_file_name = item.file_name
+                elif role == "code":
+                    code_file_names.append(item.file_name)
             code_reference = db.scalar(
                 select(SubmissionCodeReference)
                 .where(SubmissionCodeReference.submission_id == latest_submission.id)
@@ -446,7 +508,11 @@ def create_app() -> FastAPI:
             submission_id=latest_submission.id if latest_submission else None,
             status="submitted" if latest_submission else "not_submitted",
             can_submit=can_submit,
+            report_file_name=report_file_name,
             code_link=code_link,
+            code_file_names=code_file_names or None,
+            report_submitted=report_file_name is not None,
+            code_submitted=bool(code_link or code_file_names),
             submitted_late=is_late_submission,
         )
 
@@ -461,48 +527,25 @@ def create_app() -> FastAPI:
     ) -> SubmissionResponse:
         assignment = db.get(Assignment, assignment_id)
         if not assignment:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задание не найдено")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ÐÐ°Ð´Ð°Ð½Ð¸Ðµ Ð½Ðµ Ð½Ð°Ð¹Ð´ÐµÐ½Ð¾")
 
         current_time = now_utc()
         if not is_assignment_visible(assignment, current_time):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Задание пока недоступно")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="ÐÐ°Ð´Ð°Ð½Ð¸Ðµ Ð¿Ð¾ÐºÐ° Ð½ÐµÐ´Ð¾ÑÑÑÐ¿Ð½Ð¾")
 
         state = assignment_state(assignment, current_time)
         if state == "closed":
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Сдача по этому заданию закрыта")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Ð¡Ð´Ð°ÑÐ° Ð¿Ð¾ ÑÑÐ¾Ð¼Ñ Ð·Ð°Ð´Ð°Ð½Ð¸Ñ Ð·Ð°ÐºÑÑÑÐ°")
 
         try:
             meta = SubmissionMeta.model_validate_json(submission_meta)
         except Exception as exc:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Некорректный submission_meta") from exc
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="ÐÐµÐºÐ¾ÑÑÐµÐºÑÐ½ÑÐ¹ submission_meta") from exc
 
         if meta.assignment_id != assignment_id:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="assignment_id не совпадает с URL")
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="assignment_id Ð½Ðµ ÑÐ¾Ð²Ð¿Ð°Ð´Ð°ÐµÑ Ñ URL")
 
         computed_late_submission = current_time > assignment.deadline
-
-        requirements = assignment_submission_requirements(assignment)
-
-        if requirements["requires_report_docx"]:
-            if report_file is None:
-                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Не приложен отчет .docx")
-            report_name = (report_file.filename or "").lower()
-            if not report_name.endswith(".docx"):
-                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Отчет должен быть в формате .docx")
-
-        normalized_code_mode = meta.code_mode.strip().lower()
-        if normalized_code_mode not in {"file", "link"}:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Неверный режим сдачи кода")
-
-        code_file_items = code_files or []
-        code_link = meta.code_link.strip()
-        if normalized_code_mode == "file" and len(code_file_items) == 0:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Не приложен файл с кодом")
-        if normalized_code_mode == "link" and not validate_code_link(code_link):
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Ссылка на код должна вести на GitHub/GitLab/Google Drive",
-            )
 
         existing_submission = db.scalar(
             select(Submission)
@@ -510,6 +553,59 @@ def create_app() -> FastAPI:
             .order_by(Submission.submitted_at.desc(), Submission.id.desc())
             .limit(1)
         )
+        existing_code_ref = None
+        existing_report_file = None
+        existing_code_files: list[SubmissionFile] = []
+        if existing_submission is not None:
+            existing_code_ref = db.scalar(
+                select(SubmissionCodeReference).where(SubmissionCodeReference.submission_id == existing_submission.id).limit(1)
+            )
+            existing_submission_files = db.scalars(
+                select(SubmissionFile).where(SubmissionFile.submission_id == existing_submission.id)
+            ).all()
+            for item in existing_submission_files:
+                file_role = infer_submission_file_role(item.file_name, item.content_type)
+                if file_role == "report" and existing_report_file is None:
+                    existing_report_file = item
+                elif file_role == "code":
+                    existing_code_files.append(item)
+
+        if report_file is not None:
+            report_name = (report_file.filename or "").lower()
+            if not report_name.endswith(".docx"):
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="ÐÑÑÐµÑ Ð´Ð¾Ð»Ð¶ÐµÐ½ Ð±ÑÑÑ Ð² ÑÐ¾ÑÐ¼Ð°ÑÐµ .docx")
+
+        normalized_code_mode = meta.code_mode.strip().lower()
+        if normalized_code_mode not in {"file", "link"}:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="ÐÐµÐ²ÐµÑÐ½ÑÐ¹ ÑÐµÐ¶Ð¸Ð¼ ÑÐ´Ð°ÑÐ¸ ÐºÐ¾Ð´Ð°")
+
+        code_file_items = code_files or []
+        code_link = meta.code_link.strip()
+        replacing_with_new_code_link = normalized_code_mode == "link" and bool(code_link) and code_link != (existing_code_ref.url if existing_code_ref else "")
+        report_update_requested = report_file is not None or meta.delete_report
+        code_update_requested = len(code_file_items) > 0 or replacing_with_new_code_link or meta.delete_code
+
+        existing_has_report = existing_report_file is not None
+        existing_has_code = bool(existing_code_files or existing_code_ref)
+        result_has_report = bool(report_file) if report_update_requested else existing_has_report
+        result_has_code = (bool(code_file_items) or replacing_with_new_code_link) if code_update_requested else existing_has_code
+
+        if not existing_submission and not (report_update_requested or code_update_requested):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="ÐÑÐ¶Ð½Ð¾ Ð¿ÑÐ¸Ð»Ð¾Ð¶Ð¸ÑÑ Ð¾ÑÑÐµÑ, ÐºÐ¾Ð´ Ð¸Ð»Ð¸ Ð¾Ð±Ðµ ÑÐ°ÑÑÐ¸")
+        if normalized_code_mode == "file" and len(code_file_items) == 0 and not report_update_requested and not existing_submission:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="ÐÐµ Ð¿ÑÐ¸Ð»Ð¾Ð¶ÐµÐ½ ÑÐ°Ð¹Ð» Ñ ÐºÐ¾Ð´Ð¾Ð¼")
+        if normalized_code_mode == "link" and code_link and not validate_code_link(code_link):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Ð¡ÑÑÐ»ÐºÐ° Ð½Ð° ÐºÐ¾Ð´ Ð´Ð¾Ð»Ð¶Ð½Ð° Ð²ÐµÑÑÐ¸ Ð½Ð° GitHub/GitLab/Google Drive",
+            )
+        if existing_submission and not (report_update_requested or code_update_requested):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="ÐÐµÑ Ð¸Ð·Ð¼ÐµÐ½ÐµÐ½Ð¸Ð¹ Ð´Ð»Ñ ÑÐ¾ÑÑÐ°Ð½ÐµÐ½Ð¸Ñ")
+        if not result_has_report and not result_has_code:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="ÐÐµÐ»ÑÐ·Ñ ÑÐ´Ð°Ð»Ð¸ÑÑ Ð¾ÑÑÐµÑ Ð¸ ÐºÐ¾Ð´ Ð¾Ð´Ð½Ð¾Ð²ÑÐµÐ¼ÐµÐ½Ð½Ð¾. ÐÑÑÐ°Ð²ÑÑÐµ ÑÐ¾ÑÑ Ð±Ñ Ð¾Ð´Ð½Ñ ÑÐ°ÑÑÑ.",
+            )
 
         is_update = existing_submission is not None
         if is_update:
@@ -530,29 +626,34 @@ def create_app() -> FastAPI:
 
         saved_files: list[dict[str, Any]] = []
 
-        target_dir = os.path.join(settings.submissions_dir, str(student.id), str(submission.id))
+        target_dir = assignment_storage_dir(student.id, assignment)
+        report_dir = os.path.join(target_dir, "report")
+        code_dir = os.path.join(target_dir, "code")
         os.makedirs(target_dir, exist_ok=True)
+        os.makedirs(report_dir, exist_ok=True)
+        os.makedirs(code_dir, exist_ok=True)
 
         if is_update:
             old_files = db.scalars(
                 select(SubmissionFile).where(SubmissionFile.submission_id == submission.id)
             ).all()
-            for old_file in old_files:
-                if old_file.storage_path and os.path.exists(old_file.storage_path):
-                    try:
-                        os.remove(old_file.storage_path)
-                    except OSError:
-                        logger.warning("failed to remove old file", extra={"action": "submission.update", "status": "warn"})
-                db.delete(old_file)
+            if report_update_requested or code_update_requested:
+                for old_file in old_files:
+                    file_role = infer_submission_file_role(old_file.file_name, old_file.content_type)
+                    if (report_update_requested and file_role == "report") or (code_update_requested and file_role == "code"):
+                        if old_file.storage_path and os.path.exists(old_file.storage_path):
+                            try:
+                                os.remove(old_file.storage_path)
+                            except OSError:
+                                logger.warning("failed to remove old file", extra={"action": "submission.update", "status": "warn"})
+                        db.delete(old_file)
 
-            old_code_ref = db.scalar(
-                select(SubmissionCodeReference).where(SubmissionCodeReference.submission_id == submission.id).limit(1)
-            )
-            if old_code_ref:
-                db.delete(old_code_ref)
-
-            shutil.rmtree(target_dir, ignore_errors=True)
-            os.makedirs(target_dir, exist_ok=True)
+            if code_update_requested:
+                old_code_ref = db.scalar(
+                    select(SubmissionCodeReference).where(SubmissionCodeReference.submission_id == submission.id).limit(1)
+                )
+                if old_code_ref:
+                    db.delete(old_code_ref)
 
         uploads: list[tuple[UploadFile, str]] = []
         if report_file is not None:
@@ -560,16 +661,22 @@ def create_app() -> FastAPI:
         for code_file in code_file_items:
             uploads.append((code_file, "code"))
 
+        code_counter = 0
         for upload, file_role in uploads:
-            safe_name = f"{uuid.uuid4()}_{upload.filename}"
-            path = os.path.join(target_dir, safe_name)
+            original_name = upload.filename or "unknown"
+            safe_original_name = sanitize_storage_component(original_name, "file")
+            if file_role == "report":
+                path = os.path.join(report_dir, safe_original_name)
+            else:
+                code_counter += 1
+                path = os.path.join(code_dir, f"{code_counter:02d}_{safe_original_name}")
             content = upload.file.read()
             with open(path, "wb") as output:
                 output.write(content)
 
             row = SubmissionFile(
                 submission_id=submission.id,
-                file_name=upload.filename or "unknown",
+                file_name=original_name,
                 content_type=upload.content_type or "application/octet-stream",
                 size=len(content),
                 storage_path=path,
@@ -586,10 +693,34 @@ def create_app() -> FastAPI:
                 }
             )
 
-        if normalized_code_mode == "link":
+        if normalized_code_mode == "link" and code_link and replacing_with_new_code_link:
             db.add(SubmissionCodeReference(submission_id=submission.id, url=code_link))
 
         db.commit()
+
+        current_files = db.scalars(
+            select(SubmissionFile).where(SubmissionFile.submission_id == submission.id)
+        ).all()
+        current_report_file_name = None
+        current_code_file_names: list[str] = []
+        for item in current_files:
+            file_role = infer_submission_file_role(item.file_name, item.content_type)
+            if file_role == "report" and current_report_file_name is None:
+                current_report_file_name = item.file_name
+            elif file_role == "code":
+                current_code_file_names.append(item.file_name)
+        current_code_ref = db.scalar(
+            select(SubmissionCodeReference).where(SubmissionCodeReference.submission_id == submission.id).limit(1)
+        )
+        write_submission_manifest(
+            target_dir,
+            student=student,
+            assignment=assignment,
+            submission=submission,
+            report_file_name=current_report_file_name,
+            code_file_names=current_code_file_names,
+            code_link=current_code_ref.url if current_code_ref else None,
+        )
 
         if settings.callback_url:
             payload = CallbackPayload(
@@ -599,7 +730,7 @@ def create_app() -> FastAPI:
                 assignment_id=assignment_id,
                 files=saved_files,
                 created_at=now_utc(),
-                message="Работа обновлена" if is_update else "Работа сдана",
+                message="Ð Ð°Ð±Ð¾ÑÐ° Ð¾Ð±Ð½Ð¾Ð²Ð»ÐµÐ½Ð°" if is_update else "Ð Ð°Ð±Ð¾ÑÐ° ÑÐ´Ð°Ð½Ð°",
                 late_submission=computed_late_submission,
             )
             try:
@@ -631,26 +762,6 @@ def create_app() -> FastAPI:
 
         return SubmissionResponse(status="accepted", submission_id=submission.id)
 
-    def rewrite_wiki_asset_urls(payload: Any) -> Any:
-        def rewrite_text_assets(text: str) -> str:
-            rewritten = re.sub(r"^/assets/", "/wiki/assets/", text)
-            rewritten = re.sub(r"\(/assets/", "(/wiki/assets/", rewritten)
-            rewritten = re.sub(r"\"/assets/", "\"/wiki/assets/", rewritten)
-            rewritten = re.sub(r"'/assets/", "'/wiki/assets/", rewritten)
-            rewritten = re.sub(r"=/assets/", "=/wiki/assets/", rewritten)
-            return rewritten
-
-        if isinstance(payload, dict):
-            rewritten: dict[str, Any] = {}
-            for key, value in payload.items():
-                rewritten[key] = rewrite_wiki_asset_urls(value)
-            return rewritten
-        if isinstance(payload, list):
-            return [rewrite_wiki_asset_urls(item) for item in payload]
-        if isinstance(payload, str) and "/assets/" in payload:
-            return rewrite_text_assets(payload)
-        return payload
-
     def wiki_get(path: str, *, params: dict[str, Any] | None = None, timeout: int = 10) -> requests.Response:
         try:
             return requests.get(f"{settings.wiki_base_url}{path}", params=params, timeout=timeout)
@@ -670,7 +781,7 @@ def create_app() -> FastAPI:
         response = wiki_get("/labs", params={"tag": tag, "kind": kind}, timeout=10)
         if not response.ok:
             raise HTTPException(status_code=502, detail="Wiki service unavailable")
-        return rewrite_wiki_asset_urls(response.json())
+        return response.json()
 
     @app.get("/wiki/labs/{slug}")
     def wiki_lab_details(slug: str, _: Student = Depends(get_current_student)) -> Any:
@@ -680,7 +791,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Wiki material not found")
         if not response.ok:
             raise HTTPException(status_code=502, detail="Wiki service unavailable")
-        return rewrite_wiki_asset_urls(response.json())
+        return response.json()
 
     @app.get("/wiki/search")
     def wiki_search(
@@ -698,7 +809,7 @@ def create_app() -> FastAPI:
         )
         if not response.ok:
             raise HTTPException(status_code=502, detail="Wiki service unavailable")
-        return rewrite_wiki_asset_urls(response.json())
+        return response.json()
 
     @app.get("/wiki/assets/{asset_path:path}")
     def wiki_asset(asset_path: str) -> Response:
@@ -707,7 +818,16 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Asset not found")
         if not response.ok:
             raise HTTPException(status_code=502, detail="Wiki service unavailable")
-        return Response(content=response.content, media_type=response.headers.get("Content-Type", "application/octet-stream"))
+        headers: dict[str, str] = {}
+        for header_name in ("Content-Length", "Cache-Control", "ETag", "Last-Modified"):
+            header_value = response.headers.get(header_name)
+            if header_value:
+                headers[header_name] = header_value
+        return Response(
+            content=response.content,
+            media_type=response.headers.get("Content-Type", "application/octet-stream"),
+            headers=headers,
+        )
     return app
 
 

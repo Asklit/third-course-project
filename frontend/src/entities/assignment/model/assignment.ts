@@ -24,6 +24,10 @@ export type AssignmentSubmissionStatus = {
   submission_id: number | null;
   status: "submitted" | "not_submitted";
   can_submit: boolean;
+  report_file_name: string | null;
   code_link: string | null;
+  code_file_names: string[] | null;
+  report_submitted: boolean;
+  code_submitted: boolean;
   submitted_late: boolean;
 };
