@@ -1,0 +1,76 @@
+<mxfile host="app.diagrams.net" agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 YaBrowser/26.3.0.0 Safari/537.36" version="29.6.0">
+  <diagram id="AeA4iFaUOT2gyn8nOJEl" name="Страница-1">
+    <mxGraphModel dx="2305" dy="1144" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="actor_student" parent="1" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;" value="Студент" vertex="1">
+          <mxGeometry height="120" width="60" x="30" y="522.5" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" edge="1" parent="1" source="actor_student" style="endArrow=none;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="uc_login" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" edge="1" parent="1" source="actor_student" style="endArrow=none;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="uc_list" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" edge="1" parent="1" source="actor_student" style="endArrow=none;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="uc_details" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" edge="1" parent="1" source="actor_student" style="endArrow=none;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="uc_status" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" edge="1" parent="1" source="actor_student" style="endArrow=none;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="uc_open_wiki" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" edge="1" parent="1" source="actor_student" style="endArrow=none;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="uc_search" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" edge="1" parent="1" source="actor_student" style="endArrow=none;html=1;" target="uc_submit" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" edge="1" parent="1" source="actor_student" style="endArrow=none;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="uc_update" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="inc1" edge="1" parent="1" source="uc_details" style="dashed=1;endArrow=open;endFill=0;html=1;labelBackgroundColor=#ffffff;" target="uc_status" value="&lt;&lt;include&gt;&gt;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ext1" edge="1" parent="1" source="uc_search" style="dashed=1;endArrow=open;endFill=0;html=1;labelBackgroundColor=#ffffff;" target="uc_open_wiki" value="&lt;&lt;extend&gt;&gt;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="inc2" edge="1" parent="1" source="uc_submit" style="dashed=1;endArrow=open;endFill=0;html=1;labelBackgroundColor=#ffffff;" target="uc_transfer" value="&lt;&lt;include&gt;&gt;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="inc3" edge="1" parent="1" source="uc_update" style="dashed=1;endArrow=open;endFill=0;html=1;labelBackgroundColor=#ffffff;" target="uc_transfer" value="&lt;&lt;include&gt;&gt;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="uc_login" parent="1" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;" value="Авторизоваться" vertex="1">
+          <mxGeometry height="70" width="180" x="370" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="uc_list" parent="1" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;" value="Просмотреть&#xa;список заданий" vertex="1">
+          <mxGeometry height="85" width="210" x="355" y="160" as="geometry" />
+        </mxCell>
+        <mxCell id="uc_details" parent="1" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;" value="Просмотреть&#xa;карточку задания" vertex="1">
+          <mxGeometry height="85" width="210" x="355" y="300" as="geometry" />
+        </mxCell>
+        <mxCell id="uc_status" parent="1" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;" value="Просмотреть&#xa;статус сдачи" vertex="1">
+          <mxGeometry height="85" width="210" x="355" y="437.5" as="geometry" />
+        </mxCell>
+        <mxCell id="uc_open_wiki" parent="1" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;" value="Открыть материалы&#xa;лабораторной работы" vertex="1">
+          <mxGeometry height="95" width="230" x="345" y="960" as="geometry" />
+        </mxCell>
+        <mxCell id="uc_search" parent="1" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;" value="Выполнить поиск&#xa;по материалам" vertex="1">
+          <mxGeometry height="85" width="210" x="355" y="830" as="geometry" />
+        </mxCell>
+        <mxCell id="uc_update" parent="1" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;" value="Обновить&#xa;отправленную работу" vertex="1">
+          <mxGeometry height="95" width="240" x="340" y="690" as="geometry" />
+        </mxCell>
+        <mxCell id="uc_transfer" parent="1" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;" value="Передать работу&#xa;на проверку" vertex="1">
+          <mxGeometry height="90" width="220" x="680" y="615" as="geometry" />
+        </mxCell>
+        <mxCell id="uc_submit" parent="1" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;" value="Отправить работу" vertex="1">
+          <mxGeometry height="85" width="210" x="355" y="560" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
