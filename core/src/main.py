@@ -85,22 +85,28 @@ def now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def ensure_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def normalized_slug(raw_slug: str) -> str:
     return LEGACY_WIKI_SLUG_MAP.get(raw_slug, raw_slug)
 
 
 def assignment_open_at(assignment: Assignment) -> datetime:
-    return assignment.deadline - timedelta(days=VISIBILITY_WINDOW_DAYS)
+    return ensure_utc(assignment.deadline) - timedelta(days=VISIBILITY_WINDOW_DAYS)
 
 
 def is_assignment_visible(assignment: Assignment, current_time: datetime) -> bool:
-    return current_time >= assignment_open_at(assignment)
+    return ensure_utc(current_time) >= assignment_open_at(assignment)
 
 
 def assignment_state(assignment: Assignment, current_time: datetime) -> str:
     if assignment.status == "closed":
         return "closed"
-    if current_time > assignment.deadline:
+    if ensure_utc(current_time) > ensure_utc(assignment.deadline):
         return "deadline_passed"
     return "open"
 
@@ -402,7 +408,7 @@ def create_app() -> FastAPI:
         for row in visible_records:
             latest_submission = latest_submission_by_assignment.get(row.id)
             if latest_submission:
-                is_late_submission = latest_submission.submitted_at > row.deadline
+                is_late_submission = ensure_utc(latest_submission.submitted_at) > ensure_utc(row.deadline)
                 status_value = "submitted_late" if is_late_submission else "submitted"
             else:
                 status_value = assignment_state(row, current_time)
@@ -440,7 +446,7 @@ def create_app() -> FastAPI:
 
         wiki_slug = normalized_slug(record.wiki_slug)
         if latest_submission:
-            is_late_submission = latest_submission.submitted_at > record.deadline
+            is_late_submission = ensure_utc(latest_submission.submitted_at) > ensure_utc(record.deadline)
             status_value = "submitted_late" if is_late_submission else "submitted"
         else:
             status_value = assignment_state(record, current_time)
@@ -500,7 +506,9 @@ def create_app() -> FastAPI:
 
         assignment_current_state = assignment_state(assignment, current_time)
         can_submit = assignment_current_state != "closed"
-        is_late_submission = bool(latest_submission and latest_submission.submitted_at > assignment.deadline)
+        is_late_submission = bool(
+            latest_submission and ensure_utc(latest_submission.submitted_at) > ensure_utc(assignment.deadline)
+        )
 
         return AssignmentSubmissionStatusOut(
             submitted=latest_submission is not None,
@@ -545,7 +553,7 @@ def create_app() -> FastAPI:
         if meta.assignment_id != assignment_id:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="assignment_id Ð½Ðµ ÑÐ¾Ð²Ð¿Ð°Ð´Ð°ÐµÑ Ñ URL")
 
-        computed_late_submission = current_time > assignment.deadline
+        computed_late_submission = ensure_utc(current_time) > ensure_utc(assignment.deadline)
 
         existing_submission = db.scalar(
             select(Submission)

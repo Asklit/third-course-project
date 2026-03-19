@@ -175,10 +175,6 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-# Abstra
-# Abstra is an AI-powered process automation framework.
-# Ignore directories containing user credentials, local state, and settings.
-# Learn more at https://abstra.io/docs
 .abstra/
 
 # Visual Studio Code
@@ -194,16 +190,17 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
-# Cursor
-#  Cursor is an AI-powered code editor. `.cursorignore` specifies files/directories to
-#  exclude from AI features like autocomplete and code analysis. Recommended for sensitive data
-#  refer to https://docs.cursor.com/context/ignore-files
-.cursorignore
-.cursorindexingignore
-
 # LMS wiki generated/source artifacts
 wiki/materials/curated/
-wiki/materials/sources/
+
+# LMS local data and report artifacts
+data/
+lms/diagram-tools/
+lms/docs/diagrams/
+lms/docs/seeds/
+lms/docs/static/
+lms/docs/~$*
+lms/docs/*.tmp
 
 # Marimo
 marimo/_static/
