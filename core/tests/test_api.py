@@ -31,7 +31,7 @@ def test_assignments_and_assignment_details(client, auth_headers) -> None:
     assignments_response = client.get("/assignments", headers=auth_headers)
     assert assignments_response.status_code == 200
     assignments = assignments_response.json()
-    assert len(assignments) == 11
+    assert len(assignments) == 8
     assert assignments[0]["status"] in {"open", "deadline_passed", "submitted", "submitted_late"}
 
     assignment_id = assignments[0]["id"]

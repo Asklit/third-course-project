@@ -75,10 +75,18 @@ LEGACY_WIKI_SLUG_MAP = {
 }
 
 VISIBILITY_WINDOW_DAYS = 14
-VISIBLE_ASSIGNMENTS_COUNT = 14
+VISIBLE_ASSIGNMENTS_COUNT = 8
 PAST_DEADLINES_COUNT = 5
 PAST_DEADLINE_STEP_DAYS = 3
 FUTURE_DEADLINE_STEP_DAYS = 1
+
+DEFAULT_STUDENT_EMAIL = "student@example.com"
+DEFAULT_STUDENT_PASSWORD = "student123"
+DEFAULT_STUDENT_NAME = "Demo Student"
+
+SHOWCASE_STUDENT_EMAIL = "showcase@example.com"
+SHOWCASE_STUDENT_PASSWORD = "showcase123"
+SHOWCASE_STUDENT_NAME = "Showcase Student"
 
 
 def now_utc() -> datetime:
@@ -219,14 +227,32 @@ def create_app() -> FastAPI:
         os.makedirs(settings.submissions_dir, exist_ok=True)
 
         with next(get_db_session()) as session:
-            if session.scalar(select(Student.id).limit(1)) is None:
-                session.add(
-                    Student(
-                        email="student@example.com",
-                        full_name="Demo Student",
-                        password_hash=hash_password("student123"),
+            def ensure_student(email: str, full_name: str, password: str) -> Student:
+                student = session.scalar(select(Student).where(Student.email == email).limit(1))
+                if student is None:
+                    student = Student(
+                        email=email,
+                        full_name=full_name,
+                        password_hash=hash_password(password),
                     )
-                )
+                    session.add(student)
+                    session.flush()
+                else:
+                    session.execute(
+                        update(Student)
+                        .where(Student.id == student.id)
+                        .values(full_name=full_name, password_hash=hash_password(password))
+                    )
+                    session.flush()
+                    student = session.get(Student, student.id)
+                return student
+
+            ensure_student(DEFAULT_STUDENT_EMAIL, DEFAULT_STUDENT_NAME, DEFAULT_STUDENT_PASSWORD)
+            showcase_student = ensure_student(
+                SHOWCASE_STUDENT_EMAIL,
+                SHOWCASE_STUDENT_NAME,
+                SHOWCASE_STUDENT_PASSWORD,
+            )
 
             legacy_slug_map = [
                 ("lr1-intro", "lr01-introduction-and-tooling", "LR01: Introduction and tooling"),
@@ -299,6 +325,59 @@ def create_app() -> FastAPI:
                     session.execute(delete(Submission).where(Submission.id.in_(unsupported_submission_ids)))
 
                 session.execute(delete(Assignment).where(Assignment.id.in_(unsupported_assignment_ids)))
+
+            showcase_assignments = session.scalars(select(Assignment).order_by(Assignment.id)).all()
+            existing_showcase_submissions = session.scalars(
+                select(Submission).where(Submission.student_id == showcase_student.id)
+            ).all()
+            existing_by_assignment = {row.assignment_id: row for row in existing_showcase_submissions}
+
+            desired_showcase_submissions: dict[int, datetime] = {}
+            if len(showcase_assignments) >= 2:
+                on_time_assignment = showcase_assignments[1]
+                desired_showcase_submissions[on_time_assignment.id] = ensure_utc(
+                    on_time_assignment.deadline
+                ) - timedelta(days=1)
+            if len(showcase_assignments) >= 4:
+                late_assignment = showcase_assignments[3]
+                desired_showcase_submissions[late_assignment.id] = ensure_utc(
+                    late_assignment.deadline
+                ) + timedelta(hours=6)
+
+            submissions_to_remove = [
+                row.id
+                for row in existing_showcase_submissions
+                if row.assignment_id not in desired_showcase_submissions
+            ]
+            if submissions_to_remove:
+                session.execute(delete(SubmissionFile).where(SubmissionFile.submission_id.in_(submissions_to_remove)))
+                session.execute(
+                    delete(SubmissionCodeReference).where(SubmissionCodeReference.submission_id.in_(submissions_to_remove))
+                )
+                session.execute(delete(Submission).where(Submission.id.in_(submissions_to_remove)))
+
+            for assignment_id, submitted_at in desired_showcase_submissions.items():
+                existing_submission = existing_by_assignment.get(assignment_id)
+                if existing_submission is None:
+                    session.add(
+                        Submission(
+                            assignment_id=assignment_id,
+                            student_id=showcase_student.id,
+                            comment="Demo seeded submission",
+                            submitted_at=submitted_at,
+                            status="accepted",
+                        )
+                    )
+                else:
+                    session.execute(
+                        update(Submission)
+                        .where(Submission.id == existing_submission.id)
+                        .values(
+                            comment="Demo seeded submission",
+                            submitted_at=submitted_at,
+                            status="accepted",
+                        )
+                    )
 
             session.commit()
 
